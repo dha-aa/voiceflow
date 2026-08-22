@@ -1,52 +1,91 @@
 # VoiceFlow Release Guide
 
-VoiceFlow can be distributed either as an unsigned DMG for development/private sharing or as a Developer ID-signed, notarized DMG for public production distribution. The local and GitHub Actions workflows use the same `scripts/release.sh` pipeline so that build, packaging, verification, and checksum behavior is not duplicated.
+VoiceFlow supports two distribution modes. The default path creates an **unsigned, unnotarized DMG** for development or private sharing without Apple credentials. The optional production path creates a Developer ID-signed and notarized DMG when Apple signing and notarization credentials are available.
 
-> The release pipeline never stores Apple credentials, certificates, private keys, or keychain passwords in the repository. Do not paste secret values into shell output or issue comments.
+> An unsigned DMG can be published to GitHub Releases, but it is not Apple-trusted. macOS may show a security warning when a recipient opens the application.
 
-## Production configuration
+## Release metadata
 
-The current Xcode project is an application target named `voiceflow` in `voiceflow.xcodeproj`. Its production configuration is the `Release` configuration, with the following metadata:
+The Xcode project and release script use the following production configuration:
 
-| Setting | Value/source |
+| Setting | Value |
 |---|---|
-| Product name | `voiceflow` target; display name `VoiceFlow` in `Info.plist` |
+| Xcode project | `voiceflow.xcodeproj` |
+| Scheme | `voiceflow` |
+| Product bundle | `VoiceFlow.app` |
+| Swift module | `voiceflow` |
 | Bundle identifier | `dha-aa.voiceflow` |
 | Deployment target | macOS 14.0 |
-| Marketing version | `MARKETING_VERSION`, supplied by the release version argument |
-| Build number | `CURRENT_PROJECT_VERSION`, supplied by `BUILD_NUMBER` or the GitHub run number |
 | Application icon | `AppIcon` asset catalog |
-| Signing | `Developer ID Application`, supplied by `DEVELOPER_ID_APPLICATION` |
-| Runtime | Hardened Runtime enabled for Release |
-| Sandbox | Disabled because global Fn monitoring and cross-process Accessibility injection require it |
-| Microphone | `com.apple.security.device.audio-input` entitlement |
+| Release runtime | Hardened Runtime enabled |
+| App Sandbox | Disabled for global Fn monitoring and Accessibility injection |
+| Microphone entitlement | `com.apple.security.device.audio-input` |
+| Marketing version | Supplied as `MARKETING_VERSION` by the release version |
+| Build number | Supplied as `CURRENT_PROJECT_VERSION` by `BUILD_NUMBER` or the GitHub run number |
 
-The release script validates these settings before doing the expensive build or submitting anything to Apple.
+The release script reads the project configuration before building. It does not patch the generated app bundle or `Info.plist` after the build.
 
-## Local release
+## Local unsigned DMG
 
-The script supports two local release paths. The default path requires a Mac with the full Xcode installation selected, a Developer ID Application certificate, and Apple notarization credentials. The unsigned path requires only the full Xcode installation. The script prefers `DEVELOPER_DIR` and otherwise uses `/Applications/Xcode.app/Contents/Developer` when present.
+A local unsigned release requires only the full Xcode installation. Command Line Tools alone are not sufficient. From the repository root, run:
 
-For App Store Connect API-key authentication, configure the following environment variables in the invoking shell or a secure secret manager:
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+./scripts/release.sh --unsigned 1.0.0
+```
 
-| Variable | Meaning |
+The script performs the following steps:
+
+1. Resolves the Xcode project and Release configuration.
+2. Validates the product name, bundle identifier, AppIcon, Hardened Runtime, and non-sandbox configuration.
+3. Cleans the release derived-data directory.
+4. Builds `VoiceFlow.app` with the supplied marketing version and build number.
+5. Creates `VoiceFlow-1.0.0.dmg` with an `Applications` shortcut.
+6. Runs `hdiutil verify` and mounts the DMG read-only to confirm its structure.
+7. Generates `SHA256SUMS.txt` from the final unsigned DMG.
+
+The default output directory is `dist/`. To keep generated artifacts outside the repository, use temporary paths:
+
+```bash
+OUTPUT_DIR=/tmp/voiceflow-unsigned/dist \
+DERIVED_DATA_DIR=/tmp/voiceflow-unsigned/derived-data \
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+./scripts/release.sh --unsigned 1.0.0
+```
+
+The unsigned local artifacts are:
+
+```text
+dist/VoiceFlow-1.0.0.dmg
+dist/SHA256SUMS.txt
+```
+
+## Local signed and notarized DMG
+
+The default release-script path is for production distribution and requires a Developer ID Application certificate plus Apple notarization credentials. The script supports either a stored `notarytool` keychain profile or an App Store Connect API key.
+
+For API-key authentication, configure these variables in a secure shell or secret manager:
+
+| Variable | Purpose |
 |---|---|
-| `DEVELOPER_ID_APPLICATION` | Full Developer ID Application certificate identity, or the identity prefix `Developer ID Application` |
-| `APPLE_API_KEY_PATH` | Path to a local App Store Connect private `.p8` key; never commit this file |
-| `APPLE_API_KEY_ID` | App Store Connect API key ID |
+| `DEVELOPER_ID_APPLICATION` | Developer ID Application identity or its full certificate identity string |
+| `APPLE_API_KEY_PATH` | Local path to the App Store Connect private `.p8` key |
+| `APPLE_API_KEY_ID` | App Store Connect key ID |
 | `APPLE_ISSUER_ID` | App Store Connect issuer ID |
 | `BUILD_NUMBER` | Optional numeric build number; defaults to `1` locally |
-| `DEVELOPER_DIR` | Optional Xcode developer directory |
+| `DEVELOPER_DIR` | Optional full Xcode developer directory |
 
-Alternatively, use a previously stored `notarytool` keychain profile by setting `NOTARY_KEYCHAIN_PROFILE` instead of the three `APPLE_*` API-key variables. Apple documents both `notarytool` submission and keychain-profile authentication in its [custom notarization workflow guide][1].
+Alternatively, set `NOTARY_KEYCHAIN_PROFILE` and use a profile stored by `xcrun notarytool store-credentials`. Never commit any certificate, private key, password, or credential file.
 
-Run the inexpensive environment and project check first:
+Run the production preflight first:
 
 ```bash
 ./scripts/release.sh --check
 ```
 
-The check mode does not build, submit to Apple, staple, or create an artifact. When it passes, create the release with one version argument:
+The preflight checks Xcode, the scheme, project metadata, Hardened Runtime, signing identity, notarization tooling, and credentials. It does not build, submit, staple, or publish anything.
+
+After the preflight passes, create the signed release:
 
 ```bash
 DEVELOPER_ID_APPLICATION='Developer ID Application: Your Name (TEAMID)' \
@@ -56,107 +95,104 @@ APPLE_ISSUER_ID='ISSUER-UUID' \
 ./scripts/release.sh 1.0.0
 ```
 
-The final files are written to `dist/`:
+The signed path verifies the app signature, creates the DMG, submits the DMG with `xcrun notarytool --wait`, staples and validates the ticket, assesses the mounted app with Gatekeeper, and generates the checksum only after those steps succeed.
 
-```text
-dist/VoiceFlow-1.0.0.dmg
-dist/SHA256SUMS.txt
-```
+## GitHub Actions workflow
 
-If Apple credentials are unavailable, create an unsigned DMG locally with:
+The workflow is located at `.github/workflows/release.yml`. It uses a pinned `macos-15` runner and selects Xcode `16.4`. The workflow has two triggers.
 
-```bash
-./scripts/release.sh --unsigned 1.0.0
-```
+### Pushed version tags
 
-The unsigned path builds the Release app, creates a normal mountable DMG containing `VoiceFlow.app` and an `Applications` shortcut, verifies the DMG structure, and computes a SHA-256 checksum. It deliberately skips signing, notarization, stapling, and Gatekeeper assessment. The default path additionally verifies the app signature, submits the DMG with `xcrun notarytool --wait`, staples the ticket, validates the stapled DMG, and runs Gatekeeper assessment before computing the checksum.
-
-## GitHub release
-
-The workflow in `.github/workflows/release.yml` supports both pushed tags and manual runs. Pushed tags matching `v*` automatically build and publish an **unsigned DMG**, which does not require Apple secrets:
+Pushing a tag matching `v*` automatically selects the unsigned mode and does not require Apple secrets:
 
 ```bash
+git checkout main
+git pull origin main
 git tag v1.0.0
 git push origin v1.0.0
 ```
 
-A successful tag run creates a GitHub Release containing `VoiceFlow-1.0.0.dmg` and `SHA256SUMS.txt`. The release title and generated notes identify the artifact as unsigned. The workflow uses a pinned `macos-15` runner and selects Xcode `16.4`, which is compatible with the project’s macOS 14 deployment target. GitHub-hosted runner images are maintained separately from the workflow, so the workflow selects an explicit Xcode version rather than depending on `macos-latest` defaults. The setup action’s documented version-selection behavior is described in [Setup Xcode version][2], and GitHub documents hosted-runner image maintenance in [About GitHub-hosted runners][3].
+A successful tag run executes the XCTest suite, builds and verifies `VoiceFlow-1.0.0.dmg`, generates `SHA256SUMS.txt`, and creates a GitHub Release containing both files. The Release is clearly labeled as unsigned. No signing, notarization, stapling, or Gatekeeper claim is made.
 
-A tag-triggered unsigned run checks out the tag, validates the version, runs the XCTest suite, calls `./scripts/release.sh --unsigned VERSION`, uploads the unsigned DMG and checksum, and creates the GitHub Release. It does not attempt signing, notarization, stapling, or Gatekeeper verification.
+### Manual workflow runs
 
-### Manual workflow execution
+Open **GitHub → Actions → Release VoiceFlow → Run workflow**, select the branch, choose a mode, and optionally enter a version.
 
-Open **Actions → Release VoiceFlow → Run workflow**, choose the branch containing the workflow, and select one of these modes:
-
-| Mode | Apple secrets required | Result |
+| Mode | Apple credentials | Behavior |
 |---|---:|---|
-| `unsigned` | No | Builds, checks, and publishes an unsigned DMG to a GitHub Release |
-| `checks` | No | Runs tests and builds an unsigned app without publishing a Release |
-| `production-release` | Yes | Builds, signs, notarizes, staples, verifies, and publishes a production DMG |
+| `unsigned` | Not required | Builds an unsigned DMG, uploads the artifact, and creates a GitHub Release. |
+| `checks` | Not required | Runs tests and builds an unsigned Release app, but does not publish a DMG or GitHub Release. |
+| `production-release` | Required | Imports the signing certificate, signs, notarizes, staples, verifies, checksums, and publishes a production DMG. |
 
-For `unsigned`, optionally enter a version such as `1.0.0`. If omitted, the workflow uses `0.0.0-manual.<run-number>`. The workflow creates a unique release tag such as `unsigned-v1.0.0-123` so repeated manual runs do not overwrite a normal version tag. The `production-release` mode intentionally fails early unless the Apple secrets below are configured.
+For manual `unsigned` runs, a version such as `1.0.0` creates a unique release tag such as `unsigned-v1.0.0-123`. If no version is entered, the workflow uses `0.0.0-manual.<run-number>`.
 
-### Required GitHub Actions secrets
+## Required production secrets
 
-The secrets are required only for `production-release` mode. Pushed version tags use unsigned mode and do not require any of them. The credential-free `checks` mode also does not require any secrets.
+No secrets are needed for unsigned tags or the manual `unsigned` and `checks` modes. Configure the following encrypted GitHub Actions secrets only when using `production-release`:
 
-Configure these repository or organization secrets before running a production release:
-
-| Secret | Required for production | Purpose |
-|---|---:|---|
-| `DEVELOPER_ID_APPLICATION` | Yes | Developer ID Application identity string |
-| `DEVELOPER_CERTIFICATE_P12_BASE64` | Yes | Base64-encoded exported Developer ID certificate and private key |
-| `DEVELOPER_CERTIFICATE_PASSWORD` | Yes | Password protecting the `.p12` export |
-| `KEYCHAIN_PASSWORD` | Yes | One-time password for the temporary CI keychain |
-| `APPLE_API_KEY_BASE64` | Yes | Base64-encoded App Store Connect private `.p8` key |
-| `APPLE_API_KEY_ID` | Yes | App Store Connect API key ID |
-| `APPLE_ISSUER_ID` | Yes | App Store Connect issuer ID |
-
-`GITHUB_TOKEN` is supplied by GitHub Actions through `github.token`; the workflow requests `contents: write` so it can create the release. The workflow does not print secret values. The manual `checks` mode does not create a GitHub Release, while the manual `unsigned` mode creates one using the automatic `GITHUB_TOKEN`.
-
-To create the certificate secret, export the Developer ID Application certificate and private key from Keychain Access as a password-protected `.p12`, then base64-encode it locally. To create the API-key secret, base64-encode the downloaded App Store Connect `.p8` file. Delete any temporary encoded files after adding the secrets. Never commit `.p12`, `.cer`, `.pem`, `.p8`, provisioning profiles, or Apple credentials.
-
-## Release verification
-
-The signed production pipeline is intentionally fail-fast and does not create a GitHub Release when signing, notarization, stapling, DMG verification, Gatekeeper assessment, or checksum generation fails. The unsigned pipeline has a separate contract: it verifies that the DMG mounts and contains the expected app and Applications shortcut, then publishes the clearly labeled unsigned artifact without claiming Apple trust.
-
-| Stage | Verification |
+| Secret | Purpose |
 |---|---|
-| Project | Scheme, bundle identifier, AppIcon, Hardened Runtime, and non-sandbox configuration |
-| Build | Release `.app` exists with requested version and build number |
-| Signature | Required only for signed production mode: `codesign --verify --deep --strict --verbose=2` plus signature metadata inspection |
-| DMG | `hdiutil verify`, read-only mount, app presence, and Applications shortcut; signed mode also verifies the nested app signature |
-| Notarization | Required only for signed production mode: `xcrun notarytool submit ... --wait` must return success |
-| Stapling | Required only for signed production mode: `xcrun stapler staple` followed by `xcrun stapler validate` |
-| Gatekeeper | Required only for signed production mode: `spctl --assess --type execute --verbose=4` |
-| Checksum | SHA-256 generated from the final DMG after all applicable verification steps |
+| `DEVELOPER_ID_APPLICATION` | Developer ID Application signing identity |
+| `DEVELOPER_CERTIFICATE_P12_BASE64` | Base64-encoded password-protected certificate and private key |
+| `DEVELOPER_CERTIFICATE_PASSWORD` | Password for the `.p12` file |
+| `KEYCHAIN_PASSWORD` | Password for the temporary CI keychain |
+| `APPLE_API_KEY_BASE64` | Base64-encoded App Store Connect private `.p8` key |
+| `APPLE_API_KEY_ID` | App Store Connect key ID |
+| `APPLE_ISSUER_ID` | App Store Connect issuer ID |
 
-A real Apple notarization submission requires valid Apple credentials and a valid Developer ID certificate. Without those credentials, the unsigned workflow is still usable for development or private distribution, but the artifact is not Apple-trusted and must not be described as signed or notarized.
+The workflow materializes certificate and API-key files only under `$RUNNER_TEMP` and removes them in an `always()` cleanup step. Never print or commit secret values. `GITHUB_TOKEN` is supplied automatically by GitHub Actions and is used to create the Release.
+
+## Artifact verification
+
+The unsigned workflow verifies the artifact’s structure and checksum. The signed workflow performs the additional trust checks:
+
+| Check | Unsigned mode | Signed production mode |
+|---|---:|---:|
+| Release app builds | Yes | Yes |
+| Correct bundle metadata | Yes | Yes |
+| DMG exists | Yes | Yes |
+| `hdiutil verify` | Yes | Yes |
+| Read-only mount contains `VoiceFlow.app` | Yes | Yes |
+| Applications shortcut exists | Yes | Yes |
+| `codesign --verify` | No | Yes |
+| Apple notarization | No | Yes |
+| Stapled ticket validation | No | Yes |
+| Gatekeeper assessment | No | Yes |
+| SHA-256 checksum | Yes | Yes, after stapling |
+
+A successful unsigned build must not be described as signed, notarized, stapled, or Gatekeeper-approved.
+
+## Installing an unsigned DMG
+
+An unsigned DMG is suitable for development or private sharing, but recipients may see an unidentified-developer warning. To install it, open the DMG and drag `VoiceFlow.app` to Applications. The first time it is opened, Control-click `VoiceFlow.app`, choose **Open**, and confirm the macOS prompt.
+
+If macOS continues to block the app, open **System Settings → Privacy & Security**, locate the blocked VoiceFlow message, and choose **Open Anyway**. Users may need to repeat this process after replacing the application with a newer unsigned build. Signed and notarized distribution avoids this extra installation step.
+
+## Security and privacy rules
+
+Never commit `.p12`, `.cer`, `.pem`, `.p8`, provisioning profiles, Apple credentials, keychain passwords, audio recordings, model artifacts, or generated DMGs. The release workflow must not print secrets.
+
+VoiceFlow’s application diagnostics are privacy-safe metadata logs. They may include model identifiers, paths, durations, byte counts, process identifiers, and error categories. They must not contain microphone audio, transcription results, inserted text, clipboard contents, or secret values.
 
 ## Troubleshooting
 
-**Signing identity not found.** Run `security find-identity -v -p codesigning` and confirm that the Developer ID Application certificate and private key are present. Set `DEVELOPER_ID_APPLICATION` to the exact identity string. Do not weaken the script to ad-hoc signing for a production release.
+**The unsigned workflow fails before creating a DMG.** Open the workflow log and check the Xcode version, scheme, available disk space, and the exact error from `xcodebuild` or `hdiutil`. The unsigned path should not require a Developer ID certificate or Apple notarization credentials.
 
-**Certificate import failure in CI.** Verify that the `.p12` secret was exported with its private key, encoded without line-wrapping corruption, and paired with the correct certificate password. The temporary keychain must be unlocked before importing and must be deleted after the job.
+**The GitHub Actions Run workflow button is missing.** Confirm that `.github/workflows/release.yml` exists on the selected branch and that the workflow has been pushed to GitHub. Refresh the Actions page and select **Release VoiceFlow**.
 
-**Missing credentials.** This is expected in `unsigned` and `checks` modes; both deliberately skip signing and notarization. Use `unsigned` when you want an automatic GitHub Release containing a DMG. For a signed production release, configure all seven required secrets and verify that the `.p8` key belongs to the issuer and key ID configured in the workflow.
+**A manual unsigned run does not create a Release.** Confirm that `mode` is `unsigned`, not `checks`. The `checks` mode intentionally publishes nothing.
 
-**Notarization rejection.** Download the submission log with `xcrun notarytool log` using the same authentication method. Common causes include an invalid nested signature, missing Hardened Runtime, invalid entitlements, or unsigned embedded code. Do not continue to stapling or publishing after a rejected submission.
+**A signed production run reports a missing identity.** Confirm that the certificate and private key were exported together, the base64 value is intact, and `DEVELOPER_ID_APPLICATION` matches the identity shown by `security find-identity -v -p codesigning`.
 
-**Invalid entitlements.** VoiceFlow intentionally uses the audio-input entitlement and explicitly disables App Sandbox. Do not add entitlements blindly. Global Fn monitoring and Accessibility injection are incompatible with the current sandboxed design.
+**Notarization is rejected.** Use `xcrun notarytool log` with the same credentials to inspect Apple’s submission log. Common causes include invalid nested signatures, missing Hardened Runtime, invalid entitlements, or unsigned embedded code. Do not publish a signed release after a rejected submission.
 
-**DMG creation or mount failure.** Confirm that `hdiutil` is available, the output disk has sufficient space, and the generated DMG is not being copied into its own staging directory. The script creates the DMG outside its temporary staging directory and immediately runs `hdiutil verify` and a read-only mount check.
+**The DMG cannot be mounted.** Run `hdiutil verify` against the downloaded file and confirm that the download completed. A checksum mismatch means the artifact should be downloaded again rather than installed.
 
-**Stapling failure.** Confirm that the notarization status was accepted and that the runner can reach Apple’s ticket service. The script stops before checksum generation if stapling or validation fails.
-
-**Gatekeeper warning for an unsigned DMG.** This is expected. On the Mac receiving the app, open the DMG and move VoiceFlow to Applications. Then Control-click `VoiceFlow.app`, choose **Open**, and confirm the prompt. If macOS still blocks it, open **System Settings → Privacy & Security** and choose **Open Anyway** for VoiceFlow. Users may need to repeat this after replacing the app. A signed and notarized release avoids this extra step.
-
-**Missing or incompatible Xcode.** Install the full Xcode version selected by `DEVELOPER_DIR` or by the GitHub workflow. Command Line Tools alone are not sufficient for the project build, `xcodebuild`, `notarytool`, and `stapler` operations used here.
-
-**GitHub Release already exists.** A pushed-tag run uses the version tag and verifies it. A manual unsigned run uses a unique `unsigned-v<version>-<run-number>` tag. If a release for the same tag already exists, resolve the release/tag state intentionally rather than deleting or overwriting artifacts automatically.
+**Gatekeeper blocks VoiceFlow.** This is expected for an unsigned DMG. Use Control-click → **Open**, followed by **System Settings → Privacy & Security → Open Anyway** if necessary.
 
 ## References
 
 [1]: https://developer.apple.com/documentation/security/customizing-the-notarization-workflow "Apple: Customizing the notarization workflow"
 [2]: https://github.com/marketplace/actions/setup-xcode-version "GitHub Marketplace: Setup Xcode version"
 [3]: https://docs.github.com/en/actions/concepts/runners/github-hosted-runners#overview-of-github-hosted-runners "GitHub Docs: About GitHub-hosted runners"
+[4]: https://support.apple.com/en-gb/guide/mac-help/mh40616/mac "Apple Support: Safely open apps on Mac"
