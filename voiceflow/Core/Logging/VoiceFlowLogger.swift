@@ -16,7 +16,7 @@ enum VoiceFlowLog {
     static let transcription = Logger(subsystem: subsystem, category: "transcription")
     static let pipeline = Logger(subsystem: subsystem, category: "pipeline")
 
-    static func audioIdentifier(for url: URL) -> String {
+    nonisolated static func audioIdentifier(for url: URL) -> String {
         url.deletingPathExtension().lastPathComponent
     }
 }

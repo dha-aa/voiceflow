@@ -26,9 +26,22 @@
 		E3BC6ED430397E9A0046E561 /* voiceflowTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = voiceflowTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		E3BC6EE030397E9A0046E561 /* Exclude Info.plist from "voiceflow" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Resources/Info.plist,
+			);
+			target = E3BC6EC230397E9A0046E561 /* voiceflow */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		E3BC6EC530397E9A0046E561 /* voiceflow */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				E3BC6EE030397E9A0046E561 /* Exclude Info.plist from "voiceflow" target */,
+			);
 			path = voiceflow;
 			sourceTree = "<group>";
 		};
@@ -335,7 +348,7 @@
 					CODE_SIGN_STYLE = Automatic;
 					COMBINE_HIDPI_IMAGES = YES;
 					CURRENT_PROJECT_VERSION = 1;
-					ENABLE_APP_SANDBOX = YES;
+					ENABLE_APP_SANDBOX = NO;
 					ENABLE_PREVIEWS = YES;
 					ENABLE_USER_SELECTED_FILES = readonly;
 					INFOPLIST_FILE = voiceflow/Resources/Info.plist;

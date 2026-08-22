@@ -45,8 +45,10 @@ final class OverlayWindowController {
             object: userDefaults,
             queue: .main
         ) { [weak self] _ in
-            guard let self else { return }
-            self.updateOverlay(for: self.stateManager.currentState)
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.updateOverlay(for: self.stateManager.currentState)
+            }
         }
     }
 
@@ -84,17 +86,21 @@ final class OverlayWindowController {
         updateOverlay(for: stateManager.currentState)
 
         stateTimer = Timer.scheduledTimer(withTimeInterval: 0.10, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            let state = self.stateManager.currentState
-            guard state != self.lastObservedState else { return }
-            self.lastObservedState = state
-            self.updateOverlay(for: state)
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let state = self.stateManager.currentState
+                guard state != self.lastObservedState else { return }
+                self.lastObservedState = state
+                self.updateOverlay(for: state)
+            }
         }
 
         // Sampling is capped at 30 Hz to keep waveform rendering inexpensive.
         audioLevelTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            self.overlayModel.updateAudioLevel(self.audioRecorder?.audioLevel ?? 0)
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.overlayModel.updateAudioLevel(self.audioRecorder?.audioLevel ?? 0)
+            }
         }
     }
 
@@ -256,8 +262,10 @@ final class OverlayWindowController {
                 context.timingFunction = CAMediaTimingFunction(name: .easeIn)
                 panel.animator().alphaValue = 0
             }, completionHandler: { [weak self] in
-                guard let self, self.panelAnimationGeneration == generation else { return }
-                self.panel.orderOut(nil)
+                Task { @MainActor [weak self] in
+                    guard let self, self.panelAnimationGeneration == generation else { return }
+                    self.panel.orderOut(nil)
+                }
             })
         } else {
             panel.alphaValue = 0

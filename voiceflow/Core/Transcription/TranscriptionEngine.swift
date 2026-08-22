@@ -57,9 +57,15 @@ final class TranscriptionEngine: WhisperKitModelLoadValidator, ModelReadinessChe
     private var inFlightModelID: String?
     private var preloadTask: Task<Void, Never>?
 
+    init(modelManager: ModelManager) {
+        self.modelManager = modelManager
+        self.sessionFactory = LiveWhisperKitSessionFactory()
+        VoiceFlowLog.transcription.debug("transcription_engine_initialized")
+    }
+
     init(
         modelManager: ModelManager,
-        sessionFactory: WhisperKitSessionFactory = LiveWhisperKitSessionFactory()
+        sessionFactory: WhisperKitSessionFactory
     ) {
         self.modelManager = modelManager
         self.sessionFactory = sessionFactory

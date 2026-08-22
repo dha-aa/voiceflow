@@ -100,6 +100,8 @@ struct GeneralSettingsView: View {
             "Approval is required in System Settings → Login Items."
         case .notRegistered:
             "VoiceFlow will not start automatically."
+        case .notFound:
+            "Launch-at-login is unavailable for this app installation."
         @unknown default:
             "Launch-at-login status is unavailable."
         }

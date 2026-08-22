@@ -55,11 +55,13 @@ final class MenuBarController {
 
     private func startStateObservation() {
         stateTimer = Timer.scheduledTimer(withTimeInterval: 0.10, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            let state = self.stateManager.currentState
-            guard state != self.lastState else { return }
-            self.lastState = state
-            self.updateIcon(for: state)
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let state = self.stateManager.currentState
+                guard state != self.lastState else { return }
+                self.lastState = state
+                self.updateIcon(for: state)
+            }
         }
     }
 
@@ -73,25 +75,29 @@ final class MenuBarController {
         case .recording:
             setIcon(symbolName: "mic.fill", tint: .systemRed, alpha: 1)
             animationTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-                guard let self else { return }
-                self.animationFrame.toggle()
-                self.setIcon(
-                    symbolName: self.animationFrame ? "mic.fill" : "mic",
-                    tint: .systemRed,
-                    alpha: self.animationFrame ? 1.0 : 0.72
-                )
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.animationFrame.toggle()
+                    self.setIcon(
+                        symbolName: self.animationFrame ? "mic.fill" : "mic",
+                        tint: .systemRed,
+                        alpha: self.animationFrame ? 1.0 : 0.72
+                    )
+                }
             }
 
         case .preparingModel, .processing, .injecting:
             setIcon(symbolName: "waveform", tint: nil, alpha: 1)
             animationTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-                guard let self else { return }
-                self.animationFrame.toggle()
-                self.setIcon(
-                    symbolName: self.animationFrame ? "waveform" : "waveform.path.ecg",
-                    tint: nil,
-                    alpha: self.animationFrame ? 1.0 : 0.68
-                )
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.animationFrame.toggle()
+                    self.setIcon(
+                        symbolName: self.animationFrame ? "waveform" : "waveform.path.ecg",
+                        tint: nil,
+                        alpha: self.animationFrame ? 1.0 : 0.68
+                    )
+                }
             }
 
         case .error:
