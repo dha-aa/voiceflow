@@ -196,22 +196,29 @@ jobs:
           if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
             RELEASE_TAG="${{ steps.version.outputs.tag }}"
             RELEASE_TITLE="VoiceFlow ${{ steps.version.outputs.version }}"
-            VERIFY_ARGS=(--verify-tag)
+            gh release create "$RELEASE_TAG" \
+              "dist/VoiceFlow-${{ steps.version.outputs.version }}.dmg" \
+              dist/SHA256SUMS.txt \
+              --verify-tag \
+              --generate-notes \
+              --title "$RELEASE_TITLE"
           elif [[ "${RELEASE_MODE}" == "unsigned" ]]; then
             RELEASE_TAG="unsigned-v${{ steps.version.outputs.version }}-${GITHUB_RUN_NUMBER}"
             RELEASE_TITLE="VoiceFlow ${{ steps.version.outputs.version }} (unsigned)"
-            VERIFY_ARGS=()
+            gh release create "$RELEASE_TAG" \
+              "dist/VoiceFlow-${{ steps.version.outputs.version }}.dmg" \
+              dist/SHA256SUMS.txt \
+              --generate-notes \
+              --title "$RELEASE_TITLE"
           else
             RELEASE_TAG="production-v${{ steps.version.outputs.version }}-${GITHUB_RUN_NUMBER}"
             RELEASE_TITLE="VoiceFlow ${{ steps.version.outputs.version }}"
-            VERIFY_ARGS=()
+            gh release create "$RELEASE_TAG" \
+              "dist/VoiceFlow-${{ steps.version.outputs.version }}.dmg" \
+              dist/SHA256SUMS.txt \
+              --generate-notes \
+              --title "$RELEASE_TITLE"
           fi
-          gh release create "$RELEASE_TAG" \
-            "dist/VoiceFlow-${{ steps.version.outputs.version }}.dmg" \
-            dist/SHA256SUMS.txt \
-            "${VERIFY_ARGS[@]}" \
-            --generate-notes \
-            --title "$RELEASE_TITLE"
 
       - name: Remove temporary signing material
         if: always()
