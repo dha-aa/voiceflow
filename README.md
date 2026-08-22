@@ -109,6 +109,16 @@ xcodebuild \
 
 The current suite contains **102 tests** covering the recording stage, pipeline coordination, model management, transcription session behavior, text injection, overlay state, settings persistence, and related regressions. See [`docs/testing.md`](docs/testing.md) for the full verification matrix.
 
+Build a local unsigned app bundle into `build/` with the convenience script:
+
+```bash
+./scripts/buildapp.sh
+./scripts/buildapp.sh --test --reveal
+./scripts/buildapp.sh --open
+```
+
+Use `--release` for an unsigned Release configuration, `--clean` to remove only the known generated app output, and `--install` to copy the result to `/Applications/VoiceFlow.app` (administrator permission may be requested). The script keeps Xcode derived data temporary and does not create a signed or notarized artifact; for distribution DMGs, use [`scripts/release.sh`](scripts/release.sh).
+
 ### Continuous integration
 
 Every pull request targeting `main`, every push to `main`, and manual CI runs execute the **CI Quality Gate** workflow. It validates the repository and workflow files, builds the Debug app without signing, and runs the complete XCTest suite. The workflow publishes its result directly to the pull request through GitHub Checks and the job summary. The protected `main` branch requires the `CI Quality Gate` status check, so a failing build, test, or quality check cannot be merged through the normal pull-request path.
