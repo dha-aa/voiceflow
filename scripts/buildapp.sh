@@ -150,18 +150,30 @@ build_app() {
         "${settings[@]}" \
         build
 
-    local built_app="$derived_data/Build/Products/$BUILD_CONFIG/VoiceFlow.app"
-    [[ -d "$built_app" ]] || fail "Xcode did not produce VoiceFlow.app at $built_app"
+    local products_dir="$derived_data/Build/Products/$BUILD_CONFIG"
+    local built_app="$products_dir/VoiceFlow.app"
+    if [[ ! -d "$built_app" ]]; then
+        built_app="$(find "$products_dir" -maxdepth 1 -type d -name '*.app' -print -quit 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$built_app" || ! -d "$built_app" ]]; then
+        local discovered_apps
+        discovered_apps="$(find "$products_dir" -maxdepth 2 -type d -name '*.app' -print 2>/dev/null | tr '\n' ' ' || true)"
+        fail "Xcode build succeeded, but no app bundle was found under $products_dir (discovered: ${discovered_apps:-none})"
+    fi
 
     mkdir -p "$BUILD_DIR"
+    local staging_app="$BUILD_DIR/.VoiceFlow.app.staging"
+    rm -rf "$staging_app"
+    ditto "$built_app" "$staging_app"
+
+    [[ -d "$staging_app/Contents" ]] || fail "staged app is missing its Contents directory"
+    [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$staging_app/Contents/Info.plist")" == "dha-aa.voiceflow" ]] || \
+        fail "staged app has an unexpected bundle identifier"
+
     rm -rf "$BUILD_DIR/VoiceFlow.app"
-    ditto "$built_app" "$BUILD_DIR/VoiceFlow.app"
+    mv "$staging_app" "$BUILD_DIR/VoiceFlow.app"
     APP_PATH="$BUILD_DIR/VoiceFlow.app"
-
-    [[ -d "$APP_PATH/Contents" ]] || fail "copied app is missing its Contents directory"
-    [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Contents/Info.plist")" == "dha-aa.voiceflow" ]] || \
-        fail "copied app has an unexpected bundle identifier"
-
     info "app ready: $APP_PATH"
 }
 
