@@ -7,15 +7,16 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'Run checks without Apple credentials, or run the full production release'
+        description: 'Choose unsigned distribution or signed production release'
         required: true
         type: choice
-        default: checks
+        default: unsigned
         options:
+          - unsigned
           - checks
           - production-release
       version:
-        description: 'Version for manual checks, for example 1.0.0 (optional)'
+        description: 'Version for manual runs, for example 1.0.0 (optional)'
         required: false
         type: string
 
@@ -26,7 +27,7 @@ env:
   DEVELOPER_ID_APPLICATION: ${{ secrets.DEVELOPER_ID_APPLICATION }}
   APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
   APPLE_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
-  RELEASE_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'production-release' }}
+  RELEASE_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'unsigned' }}
 
 jobs:
   release:
@@ -63,7 +64,7 @@ jobs:
               echo "Expected a version such as 1.0.0; received: $VERSION" >&2
               exit 1
             }
-            TAG="manual-${GITHUB_RUN_NUMBER}"
+            TAG="unsigned-v${VERSION}-${GITHUB_RUN_NUMBER}"
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -122,7 +123,14 @@ jobs:
             test \
             CODE_SIGNING_ALLOWED=NO
 
-      - name: Build unsigned Release for manual checks
+      - name: Build unsigned DMG
+        if: env.RELEASE_MODE == 'unsigned'
+        shell: bash
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: ./scripts/release.sh --unsigned "${{ steps.version.outputs.version }}"
+
+      - name: Build unsigned Release app for manual checks
         if: env.RELEASE_MODE == 'checks'
         shell: bash
         env:
@@ -146,19 +154,29 @@ jobs:
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist")" = 'dha-aa.voiceflow'
           echo "Unsigned Release validation completed for VoiceFlow.app"
 
-      - name: Run release preflight
+      - name: Run signed release preflight
         if: env.RELEASE_MODE == 'production-release'
         shell: bash
         run: ./scripts/release.sh --check
 
-      - name: Build, sign, notarize, staple, verify, and checksum
+      - name: Build signed, notarized DMG
         if: env.RELEASE_MODE == 'production-release'
         shell: bash
         env:
           BUILD_NUMBER: ${{ github.run_number }}
         run: ./scripts/release.sh "${{ steps.version.outputs.version }}"
 
-      - name: Upload verified release artifacts
+      - name: Upload unsigned DMG
+        if: env.RELEASE_MODE == 'unsigned'
+        uses: actions/upload-artifact@v4
+        with:
+          name: VoiceFlow-${{ steps.version.outputs.version }}-unsigned
+          if-no-files-found: error
+          path: |
+            dist/VoiceFlow-${{ steps.version.outputs.version }}.dmg
+            dist/SHA256SUMS.txt
+
+      - name: Upload verified signed artifacts
         if: env.RELEASE_MODE == 'production-release'
         uses: actions/upload-artifact@v4
         with:
@@ -169,19 +187,31 @@ jobs:
             dist/SHA256SUMS.txt
 
       - name: Create GitHub Release
-        if: env.RELEASE_MODE == 'production-release'
+        if: env.RELEASE_MODE == 'unsigned' || env.RELEASE_MODE == 'production-release'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          TAG="${{ steps.version.outputs.tag }}"
-          gh release create "$TAG" \
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            RELEASE_TAG="${{ steps.version.outputs.tag }}"
+            RELEASE_TITLE="VoiceFlow ${{ steps.version.outputs.version }}"
+            VERIFY_ARGS=(--verify-tag)
+          elif [[ "${RELEASE_MODE}" == "unsigned" ]]; then
+            RELEASE_TAG="unsigned-v${{ steps.version.outputs.version }}-${GITHUB_RUN_NUMBER}"
+            RELEASE_TITLE="VoiceFlow ${{ steps.version.outputs.version }} (unsigned)"
+            VERIFY_ARGS=()
+          else
+            RELEASE_TAG="production-v${{ steps.version.outputs.version }}-${GITHUB_RUN_NUMBER}"
+            RELEASE_TITLE="VoiceFlow ${{ steps.version.outputs.version }}"
+            VERIFY_ARGS=()
+          fi
+          gh release create "$RELEASE_TAG" \
             "dist/VoiceFlow-${{ steps.version.outputs.version }}.dmg" \
             dist/SHA256SUMS.txt \
-            --verify-tag \
+            "${VERIFY_ARGS[@]}" \
             --generate-notes \
-            --title "VoiceFlow ${{ steps.version.outputs.version }}"
+            --title "$RELEASE_TITLE"
 
       - name: Remove temporary signing material
         if: always()

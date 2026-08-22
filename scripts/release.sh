@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# VoiceFlow release pipeline: build, sign, package, notarize, staple, verify, checksum.
+# VoiceFlow release pipeline: build, sign or package unsigned, notarize when configured, and checksum.
 set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -11,22 +11,23 @@ readonly OUTPUT_DIR="${OUTPUT_DIR:-$ROOT_DIR/dist}"
 readonly DERIVED_DATA_DIR="${DERIVED_DATA_DIR:-$ROOT_DIR/.release/derived-data}"
 readonly BUILD_NUMBER="${BUILD_NUMBER:-${GITHUB_RUN_NUMBER:-1}}"
 readonly SIGNING_IDENTITY="${DEVELOPER_ID_APPLICATION:-Developer ID Application}"
-readonly CHECK_ONLY="${RELEASE_CHECK_ONLY:-0}"
 
 usage() {
     cat <<'USAGE'
 Usage:
   ./scripts/release.sh VERSION
+  ./scripts/release.sh --unsigned VERSION
   ./scripts/release.sh --check
 
 VERSION must be a semantic version such as 1.0.0. The version is supplied to
 xcodebuild as MARKETING_VERSION; it is not written into source files.
 
-Required for a real release:
-  DEVELOPER_ID_APPLICATION  Developer ID Application identity or identity prefix
-  One notarization method:
-    APPLE_API_KEY_PATH, APPLE_API_KEY_ID, APPLE_ISSUER_ID
-    OR NOTARY_KEYCHAIN_PROFILE
+The default VERSION path creates a signed, notarized production release and
+requires a Developer ID identity plus Apple notarization credentials.
+
+The --unsigned path creates a normal mountable DMG without signing,
+notarization, stapling, or Gatekeeper assessment. It requires no Apple
+credentials and is intended for development or private distribution.
 
 Optional:
   BUILD_NUMBER              Numeric build number (defaults to GITHUB_RUN_NUMBER or 1)
@@ -122,18 +123,25 @@ check_notarization_credentials() {
 }
 
 check_requirements() {
+    local requires_signing="$1"
     local command
-    for command in xcodebuild xcrun codesign security hdiutil shasum; do
+    for command in xcodebuild hdiutil shasum; do
         require_command "$command"
     done
-    xcrun --find notarytool >/dev/null 2>&1 || die "xcrun notarytool is unavailable in the selected Xcode"
-    xcrun --find stapler >/dev/null 2>&1 || die "xcrun stapler is unavailable in the selected Xcode"
-    require_command spctl
     [[ -f "$PROJECT_PATH/project.pbxproj" ]] || die "Xcode project not found: $PROJECT_PATH"
     load_build_settings
     check_project_configuration
-    check_signing_identity
-    check_notarization_credentials
+
+    if [[ "$requires_signing" == "1" ]]; then
+        require_command xcrun
+        require_command codesign
+        require_command security
+        require_command spctl
+        xcrun --find notarytool >/dev/null 2>&1 || die "xcrun notarytool is unavailable in the selected Xcode"
+        xcrun --find stapler >/dev/null 2>&1 || die "xcrun stapler is unavailable in the selected Xcode"
+        check_signing_identity
+        check_notarization_credentials
+    fi
 }
 
 notarize() {
@@ -154,13 +162,16 @@ verify_mounted_dmg() {
     local dmg_path="$1"
     local mount_dir="$2"
     local run_gatekeeper_assessment="${3:-0}"
+    local verify_signature="${4:-1}"
     local mounted_app="$mount_dir/VoiceFlow.app"
 
     hdiutil attach -nobrowse -readonly -mountpoint "$mount_dir" "$dmg_path" >/dev/null
     trap 'hdiutil detach "$mount_dir" >/dev/null 2>&1 || true' RETURN
     [[ -d "$mounted_app" ]] || die "DMG does not contain VoiceFlow.app"
     [[ -L "$mount_dir/Applications" ]] || die "DMG does not contain an Applications shortcut"
-    codesign --verify --deep --strict --verbose=2 "$mounted_app"
+    if [[ "$verify_signature" == "1" ]]; then
+        codesign --verify --deep --strict --verbose=2 "$mounted_app"
+    fi
     if [[ "$run_gatekeeper_assessment" == "1" ]]; then
         spctl --assess --type execute --verbose=4 "$mounted_app"
     fi
@@ -175,18 +186,26 @@ fi
 
 if [[ "${1:-}" == "--check" ]]; then
     select_xcode
-    check_requirements
+    check_requirements 1
     info "check passed; no build, notarization submission, or artifact was created"
     exit 0
 fi
 
-VERSION="${1:-}"
+UNSIGNED=0
+if [[ "${1:-}" == "--unsigned" ]]; then
+    UNSIGNED=1
+    VERSION="${2:-}"
+else
+    VERSION="${1:-}"
+fi
+
 [[ -n "$VERSION" ]] || { usage >&2; exit 2; }
 validate_version "$VERSION"
 [[ "$BUILD_NUMBER" =~ ^[0-9]+$ ]] || die "BUILD_NUMBER must be numeric"
 
 select_xcode
-check_requirements
+REQUIRES_SIGNING=$((1 - UNSIGNED))
+check_requirements "$REQUIRES_SIGNING"
 
 mkdir -p "$OUTPUT_DIR" "$DERIVED_DATA_DIR"
 rm -f "$OUTPUT_DIR/VoiceFlow-"*.dmg "$OUTPUT_DIR/VoiceFlow-"*.dmg.sha256 "$OUTPUT_DIR/SHA256SUMS.txt"
@@ -199,27 +218,46 @@ DEVELOPER_DIR="$DEVELOPER_DIR" xcodebuild \
     -derivedDataPath "$DERIVED_DATA_DIR" \
     clean >/dev/null
 
-info "building Release $VERSION (build $BUILD_NUMBER)"
-DEVELOPER_DIR="$DEVELOPER_DIR" xcodebuild \
-    -project "$PROJECT_PATH" \
-    -scheme "$SCHEME" \
-    -configuration "$CONFIGURATION" \
-    -derivedDataPath "$DERIVED_DATA_DIR" \
-    -destination 'platform=macOS' \
-    MARKETING_VERSION="$VERSION" \
-    CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
-    CODE_SIGN_STYLE=Manual \
-    CODE_SIGN_IDENTITY="$SIGNING_IDENTITY" \
-    CODE_SIGNING_REQUIRED=YES \
-    CODE_SIGNING_ALLOWED=YES \
-    build
+if [[ "$UNSIGNED" == "1" ]]; then
+    info "building unsigned Release $VERSION (build $BUILD_NUMBER)"
+    DEVELOPER_DIR="$DEVELOPER_DIR" xcodebuild \
+        -project "$PROJECT_PATH" \
+        -scheme "$SCHEME" \
+        -configuration "$CONFIGURATION" \
+        -derivedDataPath "$DERIVED_DATA_DIR" \
+        -destination 'platform=macOS' \
+        MARKETING_VERSION="$VERSION" \
+        CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+        CODE_SIGNING_REQUIRED=NO \
+        CODE_SIGNING_ALLOWED=NO \
+        build
+else
+    info "building signed Release $VERSION (build $BUILD_NUMBER)"
+    DEVELOPER_DIR="$DEVELOPER_DIR" xcodebuild \
+        -project "$PROJECT_PATH" \
+        -scheme "$SCHEME" \
+        -configuration "$CONFIGURATION" \
+        -derivedDataPath "$DERIVED_DATA_DIR" \
+        -destination 'platform=macOS' \
+        MARKETING_VERSION="$VERSION" \
+        CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+        CODE_SIGN_STYLE=Manual \
+        CODE_SIGN_IDENTITY="$SIGNING_IDENTITY" \
+        CODE_SIGNING_REQUIRED=YES \
+        CODE_SIGNING_ALLOWED=YES \
+        build
+fi
 
 APP_PATH="$DERIVED_DATA_DIR/Build/Products/$CONFIGURATION/VoiceFlow.app"
 [[ -d "$APP_PATH" ]] || die "Release app was not produced at $APP_PATH"
 
-info "verifying application signature"
-codesign --verify --deep --strict --verbose=2 "$APP_PATH"
-codesign -dv --verbose=4 "$APP_PATH" 2>&1 | sed -E 's/(TeamIdentifier=|Authority=Developer ID Application: ).*/\0/' >/dev/null
+if [[ "$UNSIGNED" == "1" ]]; then
+    info "unsigned app created; skipping signature verification"
+else
+    info "verifying application signature"
+    codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+    codesign -dv --verbose=4 "$APP_PATH" >/dev/null 2>&1
+fi
 
 STAGING_DIR="$(mktemp -d "${TMPDIR:-/tmp}/voiceflow-dmg-staging.XXXXXX")"
 MOUNT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/voiceflow-dmg-mount.XXXXXX")"
@@ -243,22 +281,26 @@ hdiutil create \
     -imagekey zlib-level=9 \
     "$DMG_PATH" >/dev/null
 
-info "verifying DMG structure and application signature"
+info "verifying DMG structure and application"
 hdiutil verify "$DMG_PATH"
-verify_mounted_dmg "$DMG_PATH" "$MOUNT_DIR"
+verify_mounted_dmg "$DMG_PATH" "$MOUNT_DIR" 0 "$REQUIRES_SIGNING"
 
-info "submitting DMG for notarization"
-notarize "$DMG_PATH"
+if [[ "$UNSIGNED" == "1" ]]; then
+    info "unsigned DMG ready; skipping notarization, stapling, and Gatekeeper assessment"
+else
+    info "submitting DMG for notarization"
+    notarize "$DMG_PATH"
 
-info "stapling notarization ticket"
-DEVELOPER_DIR="$DEVELOPER_DIR" xcrun stapler staple "$DMG_PATH"
-DEVELOPER_DIR="$DEVELOPER_DIR" xcrun stapler validate "$DMG_PATH"
+    info "stapling notarization ticket"
+    DEVELOPER_DIR="$DEVELOPER_DIR" xcrun stapler staple "$DMG_PATH"
+    DEVELOPER_DIR="$DEVELOPER_DIR" xcrun stapler validate "$DMG_PATH"
 
-info "verifying Gatekeeper assessment"
-hdiutil verify "$DMG_PATH"
-verify_mounted_dmg "$DMG_PATH" "$MOUNT_DIR" 1
+    info "verifying Gatekeeper assessment"
+    hdiutil verify "$DMG_PATH"
+    verify_mounted_dmg "$DMG_PATH" "$MOUNT_DIR" 1 1
+fi
 
-info "generating SHA-256 checksum from the stapled DMG"
+info "generating SHA-256 checksum"
 shasum -a 256 "$DMG_PATH" > "$CHECKSUM_PATH"
 
 info "release artifacts ready"
