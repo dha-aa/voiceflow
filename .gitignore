@@ -1,0 +1,18 @@
+# Xcode and Swift Package Manager
+.DS_Store
+.build/
+DerivedData/
+*.xcuserstate
+
+# Local release outputs and temporary signing material
+dist/
+.release/
+*.dmg
+SHA256SUMS.txt
+*.p12
+*.cer
+*.pem
+*.p8
+*.mobileprovision
+*.provisionprofile
+.notarization/

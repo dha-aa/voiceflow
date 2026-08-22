@@ -1,0 +1,338 @@
+//
+//  ModelsSettingsView.swift
+//  VoiceFlow
+//
+
+import AppKit
+import SwiftUI
+
+struct ModelsSettingsView: View {
+    @Bindable var modelManager: ModelManager
+    @Bindable var downloadCoordinator: ModelDownloadCoordinator
+    @State private var pendingDeletion: WhisperModel?
+    @State private var showingActiveModelAlert = false
+    @State private var errorMessage: String?
+    @State private var isRefreshing = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+
+            ScrollView {
+                modelsList
+            }
+
+            if isRefreshing || modelManager.isLoading {
+                ProgressView("Refreshing model catalog...")
+                    .controlSize(.small)
+                    .padding(.top, 12)
+            }
+        }
+        .padding(24)
+        .navigationTitle("Models")
+        .task {
+            if modelManager.availableModels.isEmpty && !downloadCoordinator.isDownloading {
+                refreshModels()
+            }
+        }
+        .alert(
+            "Delete model?",
+            isPresented: deleteAlertBinding,
+            presenting: pendingDeletion
+        ) { model in
+            Button("Delete", role: .destructive) {
+                delete(model)
+                pendingDeletion = nil
+            }
+            Button("Cancel", role: .cancel) {
+                pendingDeletion = nil
+            }
+        } message: { model in
+            Text("Delete \(model.displayName) from this Mac? This cannot be undone.")
+        }
+        .alert("Active model cannot be deleted", isPresented: $showingActiveModelAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Select another installed model as active before deleting this model.")
+        }
+        .alert("Model action failed", isPresented: errorAlertBinding) {
+            Button("OK", role: .cancel) {
+                downloadCoordinator.dismissError()
+                errorMessage = nil
+            }
+        } message: {
+            Text(errorMessage ?? downloadCoordinator.errorMessage ?? "Unknown model error")
+        }
+    }
+
+    private var header: some View {
+        HStack {
+            Text("Models")
+                .font(.title2.bold())
+            Spacer()
+            Button {
+                refreshModels()
+            } label: {
+                Image(systemName: "arrow.clockwise")
+            }
+            .buttonStyle(.borderless)
+            .help("Refresh available WhisperKit models")
+            .disabled(isRefreshing || downloadCoordinator.isDownloading)
+        }
+        .padding(.bottom, 12)
+    }
+
+    private var modelsList: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            ModelSectionView(
+                title: "Installed Models",
+                models: installedModels,
+                emptyText: "No models installed yet.",
+                activeDownloadID: downloadCoordinator.activeModelID,
+                downloadProgress: downloadCoordinator.progress,
+                isCancelling: downloadCoordinator.isCancelling,
+                onSetActive: setActive,
+                onDownload: startDownload,
+                onCancel: cancelDownload,
+                onDelete: requestDelete
+            )
+
+            ModelSectionView(
+                title: "Available to Download",
+                models: downloadableModels,
+                emptyText: "No additional models are currently available.",
+                activeDownloadID: downloadCoordinator.activeModelID,
+                downloadProgress: downloadCoordinator.progress,
+                isCancelling: downloadCoordinator.isCancelling,
+                onSetActive: setActive,
+                onDownload: startDownload,
+                onCancel: cancelDownload,
+                onDelete: requestDelete
+            )
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Model location")
+                        .font(.caption.weight(.semibold))
+                    Spacer()
+                    Button {
+                        NSWorkspace.shared.open(modelManager.downloadBase)
+                    } label: {
+                        Label("Open in Finder", systemImage: "folder")
+                    }
+                    .buttonStyle(.borderless)
+                }
+                Text(modelManager.downloadBase.path)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+            .padding(.top, 4)
+        }
+    }
+
+    private var installedModels: [WhisperModel] {
+        modelManager.availableModels.filter { $0.isDownloaded }
+    }
+
+    private var downloadableModels: [WhisperModel] {
+        modelManager.availableModels.filter { !$0.isDownloaded }
+    }
+
+    private var deleteAlertBinding: Binding<Bool> {
+        Binding(
+            get: { pendingDeletion != nil },
+            set: { if !$0 { pendingDeletion = nil } }
+        )
+    }
+
+    private var errorAlertBinding: Binding<Bool> {
+        Binding(
+            get: { errorMessage != nil || downloadCoordinator.errorMessage != nil },
+            set: {
+                if !$0 {
+                    errorMessage = nil
+                    downloadCoordinator.dismissError()
+                }
+            }
+        )
+    }
+
+    private func setActive(_ model: WhisperModel) {
+        modelManager.selectModel(id: model.id)
+    }
+
+    private func startDownload(_ model: WhisperModel) {
+        downloadCoordinator.startDownload(id: model.id)
+    }
+
+    private func cancelDownload() {
+        downloadCoordinator.cancelDownload()
+    }
+
+    private func requestDelete(_ model: WhisperModel) {
+        if model.isActive {
+            showingActiveModelAlert = true
+        } else {
+            pendingDeletion = model
+        }
+    }
+
+    private func delete(_ model: WhisperModel) {
+        do {
+            try modelManager.deleteModel(id: model.id)
+            Task { @MainActor in
+                try? await modelManager.refreshModels()
+            }
+        } catch {
+            errorMessage = errorDescription(for: error)
+        }
+    }
+
+    private func refreshModels() {
+        guard !isRefreshing, !downloadCoordinator.isDownloading else { return }
+        isRefreshing = true
+        Task { @MainActor in
+            defer { isRefreshing = false }
+            do {
+                try await modelManager.refreshModels()
+            } catch {
+                errorMessage = errorDescription(for: error)
+            }
+        }
+    }
+
+    private func errorDescription(for error: Error) -> String {
+        if let modelError = error as? ModelManager.ModelManagerError {
+            switch modelError {
+            case .invalidModelIdentifier: return "The model identifier is invalid."
+            case .modelNotDownloaded: return "The model is not installed."
+            case .invalidModelDirectory: return "The downloaded model failed validation."
+            case .modelLoadFailed: return "The downloaded model could not be loaded by WhisperKit."
+            case .cannotDeleteActiveModel: return "Select another active model before deleting this model."
+            case .deleteVerificationFailed: return "The model could not be fully removed."
+            }
+        }
+        return error.localizedDescription
+    }
+}
+
+private struct ModelSectionView: View {
+    let title: String
+    let models: [WhisperModel]
+    let emptyText: String
+    let activeDownloadID: String?
+    let downloadProgress: Double
+    let isCancelling: Bool
+    let onSetActive: (WhisperModel) -> Void
+    let onDownload: (WhisperModel) -> Void
+    let onCancel: () -> Void
+    let onDelete: (WhisperModel) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.headline)
+
+            if models.isEmpty {
+                Text(emptyText)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 6)
+            } else {
+                ForEach(models) { model in
+                    ModelRow(
+                        model: model,
+                        activeDownloadID: activeDownloadID,
+                        downloadProgress: downloadProgress,
+                        isCancelling: isCancelling,
+                        onSetActive: { onSetActive(model) },
+                        onDownload: { onDownload(model) },
+                        onCancel: onCancel,
+                        onDelete: { onDelete(model) }
+                    )
+                    Divider()
+                }
+            }
+        }
+    }
+}
+
+private struct ModelRow: View {
+    let model: WhisperModel
+    let activeDownloadID: String?
+    let downloadProgress: Double
+    let isCancelling: Bool
+    let onSetActive: () -> Void
+    let onDownload: () -> Void
+    let onCancel: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: model.isActive ? "checkmark.circle.fill" : "circle")
+                .foregroundStyle(model.isActive ? .green : .secondary)
+                .font(.title3)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(model.displayName)
+                        .font(.body.weight(.medium))
+                    if model.isRecommended {
+                        Text("Recommended")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Text(detailText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if activeDownloadID == model.id {
+                    HStack(spacing: 8) {
+                        ProgressView(value: downloadProgress)
+                            .progressViewStyle(.linear)
+                            .frame(maxWidth: 150)
+                        Text("\(Int(downloadProgress * 100))%")
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                        Button(isCancelling ? "Cancelling…" : "Cancel", action: onCancel)
+                            .buttonStyle(.borderless)
+                            .disabled(isCancelling)
+                    }
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            if model.isDownloaded {
+                if model.isActive {
+                    Text("Active")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.green)
+                } else {
+                    Button("Set Active", action: onSetActive)
+                        .buttonStyle(.bordered)
+                }
+                Button("Delete", role: .destructive, action: onDelete)
+                    .buttonStyle(.bordered)
+            } else if activeDownloadID == model.id {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Button("Download", action: onDownload)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(activeDownloadID != nil)
+            }
+        }
+        .padding(.vertical, 6)
+    }
+
+    private var detailText: String {
+        let size = model.sizeOnDisk.map {
+            ByteCountFormatter.string(fromByteCount: $0, countStyle: .file)
+        } ?? "Size unknown"
+        return model.isDownloaded ? "\(size) · Downloaded" : size
+    }
+}

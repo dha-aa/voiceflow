@@ -1,0 +1,138 @@
+name: Release VoiceFlow
+
+on:
+  push:
+    tags:
+      - 'v*'
+permissions:
+  contents: write
+
+env:
+  DEVELOPER_ID_APPLICATION: ${{ secrets.DEVELOPER_ID_APPLICATION }}
+  APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+  APPLE_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
+
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Select pinned Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '16.4'
+
+      - name: Validate tag version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || {
+            echo "Expected a version tag such as v1.0.0; received: $TAG" >&2
+            exit 1
+          }
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Install Developer ID certificate in temporary keychain
+        env:
+          CERTIFICATE_P12_BASE64: ${{ secrets.DEVELOPER_CERTIFICATE_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${CERTIFICATE_P12_BASE64:?Missing DEVELOPER_CERTIFICATE_P12_BASE64 secret}"
+          : "${CERTIFICATE_PASSWORD:?Missing DEVELOPER_CERTIFICATE_PASSWORD secret}"
+          : "${KEYCHAIN_PASSWORD:?Missing KEYCHAIN_PASSWORD secret}"
+          KEYCHAIN_PATH="$RUNNER_TEMP/voiceflow-signing.keychain-db"
+          CERTIFICATE_PATH="$RUNNER_TEMP/developer-id.p12"
+          printf '%s' "$CERTIFICATE_P12_BASE64" | base64 --decode > "$CERTIFICATE_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          security default-keychain -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          rm -f "$CERTIFICATE_PATH"
+
+      - name: Prepare App Store Connect API key
+        env:
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${APPLE_API_KEY_BASE64:?Missing APPLE_API_KEY_BASE64 secret}"
+          : "${APPLE_API_KEY_ID:?Missing APPLE_API_KEY_ID secret}"
+          : "${APPLE_ISSUER_ID:?Missing APPLE_ISSUER_ID secret}"
+          printf '%s' "$APPLE_API_KEY_BASE64" | base64 -D > "$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+          chmod 600 "$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+          echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8" >> "$GITHUB_ENV"
+
+      - name: Run XCTest suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project voiceflow.xcodeproj \
+            -scheme voiceflow \
+            -configuration Debug \
+            -derivedDataPath "$RUNNER_TEMP/voiceflow-tests" \
+            -destination 'platform=macOS' \
+            ONLY_ACTIVE_ARCH=YES \
+            -only-testing:voiceflowTests \
+            test \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Run release preflight
+        shell: bash
+        run: ./scripts/release.sh --check
+
+      - name: Build, sign, notarize, staple, verify, and checksum
+        shell: bash
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: ./scripts/release.sh "${{ steps.version.outputs.version }}"
+
+      - name: Upload verified release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: VoiceFlow-${{ steps.version.outputs.version }}
+          if-no-files-found: error
+          path: |
+            dist/VoiceFlow-${{ steps.version.outputs.version }}.dmg
+            dist/SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.version.outputs.tag }}"
+          gh release create "$TAG" \
+            "dist/VoiceFlow-${{ steps.version.outputs.version }}.dmg" \
+            dist/SHA256SUMS.txt \
+            --verify-tag \
+            --generate-notes \
+            --title "VoiceFlow ${{ steps.version.outputs.version }}"
+
+      - name: Remove temporary signing material
+        if: always()
+        shell: bash
+        env:
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          set +e
+          KEYCHAIN_PATH="$RUNNER_TEMP/voiceflow-signing.keychain-db"
+          if [[ -n "${KEYCHAIN_PASSWORD:-}" && -f "$KEYCHAIN_PATH" ]]; then
+            security delete-keychain "$KEYCHAIN_PATH"
+          fi
+          rm -f "$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8" "$RUNNER_TEMP/developer-id.p12"
