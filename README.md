@@ -111,7 +111,7 @@ The current suite contains **102 tests** covering the recording stage, pipeline 
 
 ### Continuous integration
 
-Every pull request targeting `main`, every push to `main`, and manual CI runs execute the **CI Quality Gate** workflow. It validates the repository and workflow files, builds the Debug app without signing, and runs the complete XCTest suite. The workflow publishes its result directly to the pull request through GitHub Checks and the job summary. Configure the `CI Quality Gate` check as a required status check in GitHub branch protection so a failing build, test, or quality check cannot be merged.
+Every pull request targeting `main`, every push to `main`, and manual CI runs execute the **CI Quality Gate** workflow. It validates the repository and workflow files, builds the Debug app without signing, and runs the complete XCTest suite. The workflow publishes its result directly to the pull request through GitHub Checks and the job summary. The protected `main` branch requires the `CI Quality Gate` status check, so a failing build, test, or quality check cannot be merged through the normal pull-request path.
 
 For a credential-free local DMG build, use:
 

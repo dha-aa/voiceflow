@@ -96,7 +96,7 @@ The expected baseline is **102 tests with zero failures**, subject to intentiona
 
 Every pull request into `main` runs `.github/workflows/ci.yml`. The workflow is named **CI Quality Gate** and performs project metadata checks, repository quality checks, an unsigned Debug build, and the complete XCTest suite. It also runs on pushes to `main` and can be started manually from the Actions page. Results appear in the pull request’s **Checks** section and in the workflow summary.
 
-The `main` branch should require the `CI Quality Gate` status check before merging, together with the repository’s normal review requirements. Do not bypass a failed check by merging locally. If the check fails, inspect the failed step and reproduce it with the commands in [`docs/testing.md`](docs/testing.md).
+The protected `main` branch requires the `CI Quality Gate` status check before merging, together with a pull request and the configured review requirement. Do not bypass a failed check by merging locally. If the check fails, inspect the failed step and reproduce it with the commands in [`docs/testing.md`](docs/testing.md).
 
 If your change affects permissions, model downloads, text injection, Settings, the overlay, menu-bar status, or real microphone behavior, perform the corresponding manual check as well. Record only the outcome and metadata in the pull request; never attach audio or transcripts.
 
