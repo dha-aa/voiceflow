@@ -1,335 +1,309 @@
-# SPEC 07 — Final Testing, Polish & Production Readiness
+# SPEC 07 — Production Readiness, CI, and Distribution
 
-## 1. Purpose
+## Status and dependency
 
-This specification completes VoiceFlow. All core functionality and UI are implemented and verified. This stage focuses on making the application production-ready: hardening edge cases, improving error handling and user-facing messages, ensuring performance, verifying accessibility, and preparing the app for code signing and distribution.
+Specification 07 is the final stage in the current seven-part engineering sequence. It consumes the verified pipeline, overlay, Settings, and model-management behavior from Specifications 01–06 and defines hardening, validation, contributor CI, branch protection, and distribution. It must not silently introduce a new product feature.
 
-No new features are added in this specification.
+The current repository supports two distribution classes:
 
----
+1. **Unsigned distribution:** a normal mountable DMG can be created and published to GitHub Releases without Apple signing or notarization credentials.
+2. **Signed production distribution:** an optional Developer ID and notarized DMG path is available when the required Apple credentials are supplied securely to the local environment or GitHub Actions.
 
-## 2. Scope
+Unsigned publication is a supported workflow, not a failed signed release. It must be clearly labeled because macOS Gatekeeper may warn users when they open an unsigned/unnotarized app. [1] [2]
 
-- Complete edge case handling across all components.
-- Audit and improve all error messages and user-facing error states.
-- Performance profiling: startup time, recording latency, transcription time, injection speed.
-- Memory management audit: no leaks, no retain cycles.
-- macOS Accessibility audit: VoiceOver labels, keyboard navigation in Settings.
-- Code signing and entitlements review.
-- App Store / notarization preparation (if distributing outside direct install).
-- Final end-to-end test suite across multiple real usage scenarios.
-- Code review and cleanup: remove debug print statements, add documentation comments to public interfaces.
+## 1. Production goals
 
----
+Production readiness means that VoiceFlow:
 
-## 3. Out of Scope
+- Preserves local-only audio, model, and dictated-text handling.
+- Has deterministic state/error behavior across permission, model, recording, transcription, and injection failures.
+- Reuses a preloaded WhisperKit session without blocking the UI unnecessarily.
+- Presents a focus-safe overlay and adaptive menu-bar identity icon.
+- Provides clear Settings and model lifecycle behavior.
+- Has reproducible local and hosted build/test checks.
+- Blocks protected-main merges when the required CI quality gate fails.
+- Produces a verified unsigned DMG without Apple secrets, and optionally a signed/notarized DMG with Apple credentials.
 
-Do NOT add any new features in this specification:
+The goal is not to claim that an unsigned artifact has the trust properties of a notarized application. The release mode, artifact label, and installation guidance must remain explicit.
 
-- No new UI surfaces.
-- No new transcription modes.
-- No new keyboard shortcuts.
-- No integration with external APIs.
+## 2. Current production baseline
 
-If a new feature is discovered to be needed, it must be planned as a separate specification after Spec 07.
+| Area | Current implementation |
+|---|---|
+| Platform | macOS 14.0 minimum |
+| Product | `VoiceFlow.app`, bundle ID `dha-aa.voiceflow` |
+| Xcode target/scheme | Project `voiceflow.xcodeproj`, scheme `voiceflow` |
+| Swift mode | Swift 5 language mode in the Xcode project |
+| CI runner | `macos-15` with Xcode 16.4 selected by `maxim-lobanov/setup-xcode@v1` |
+| App sandbox | Disabled; required by current global Fn and cross-process Accessibility behavior |
+| Hardened Runtime | Enabled for Release configuration |
+| Entitlements | Non-sandboxed app plus `com.apple.security.device.audio-input = true` |
+| App identity | `LSUIElement = true`, no Dock icon, menu-bar agent |
+| Local inference | WhisperKit 0.18.0, model files under app-owned Application Support storage |
+| Tests | 102 XCTest methods in the current test target at the time of this specification update |
+| Privacy | No audio, spoken text, transcript, or injected content in logs |
+| Protected branch | `main` requires pull requests, approval, and the `CI Quality Gate` status check |
 
----
+The actual project metadata, entitlements, and resolved dependencies are authoritative over this table. [3] [4] [5]
 
-## 4. Dependencies
+## 3. Edge-case contract
 
-**Specs 01–06 must be complete and verified before starting this spec.**
+### Recording and Fn
 
-The full application must be working end-to-end with all of the following verified:
-- Core pipeline: `Fn hold → record → transcribe → inject → idle`.
-- Recording overlay with waveform and animations.
-- Settings window with model management.
-- Menu bar popover with live model status.
+The monitor uses a 250 ms sustained hold threshold. A short tap generates no recording callbacks. Duplicate down events and Fn-down while the state is not `.idle` are ignored. If the user releases Fn while microphone permission or model readiness is pending, startup is cancelled normally and no false audio completion is emitted. [6] [7]
 
----
+The current implementation does **not** implement a maximum recording-duration cutoff, debounced 200 ms re-press policy, or a dedicated “microphone level stayed at zero” classifier. Do not document those as implemented. A missing recording URL is mapped to `.noAudioDetected`; silence or whitespace-only transcription is classified by the transcription stage. If a future maximum-duration or silence policy is required, it must be specified and tested as a separate change.
 
-## 5. Implementation Requirements
+### Model lifecycle
 
-### 5.1 Edge Case Hardening
+A model is installed only when the canonical direct Hub directory passes structural preflight and, when the production validator is wired, real WhisperKit load validation. Legacy snapshot paths are not accepted. Failed downloads and failed load validation must not remain installed. Selection accepts only a valid installed model, and a changed selection cancels stale work and preloads the new session. [8] [9]
 
-Audit and fix all known edge cases. At minimum, handle the following:
+If a model disappears between preload and transcription, the engine resolves the folder again and reports `.modelNotInstalled` rather than attempting an implicit download. Heavy-memory-pressure retry logic is not currently implemented; a load failure maps to `.modelFailedToLoad` and returns the app to safe error recovery.
 
-**Recording edge cases:**
-- [ ] `Fn` is held, recording starts, then `Fn` is accidentally released and immediately re-pressed within 200ms. Define behavior: ignore brief releases, or treat as a new recording session.
-- [ ] Recording starts but no audio is captured (mic level stays at 0.0 for the entire session). Transition to `.error(.noAudioDetected)` with a clear user message.
-- [ ] Recording session longer than 60 seconds. Define maximum recording duration and cut off gracefully. Show a brief "max duration reached" message.
-- [ ] Another application captures the microphone exclusively (e.g., a video call). Handle the AVAudioEngine error gracefully.
+### Transcription
 
-**Transcription edge cases:**
-- [ ] WhisperKit model is deleted from disk between sessions (was present at launch, deleted externally). Detect on next transcription attempt and show `.error(.modelNotInstalled)`.
-- [ ] The system is under heavy memory pressure and WhisperKit initialization fails. Retry once, then show a clear error.
-- [ ] Transcription returns a string containing only whitespace or punctuation. Treat as no audio detected.
+The transcription coordinator accepts work only while the shared state is `.processing`. Missing files, missing models, load failures, empty output, and runtime failures map to the documented shared errors. `TextProcessor` removes only known `[BLANK_AUDIO]`/`(inaudible)` artifacts and normalizes whitespace; it does not paraphrase or rewrite.
 
-**Injection edge cases:**
-- [ ] The focused application closes between `Fn` press and injection. Handle gracefully — do not crash.
-- [ ] The focused field is read-only (e.g., a label, browser URL bar in some states). Attempt injection; if it fails, fall back to clipboard + notification.
-- [ ] Injection into a terminal emulator (e.g., Terminal.app, iTerm). Verify CGEvent approach works. Document known limitations.
+### Injection
 
-**Model management edge cases:**
-- [ ] Download interrupted mid-way (network failure, app quit). Verify partial download is cleaned up and does not leave a corrupt model on disk.
-- [ ] Attempting to delete the model currently loaded in `TranscriptionEngine`. Unload first, delete, prompt user to select another.
-- [ ] Disk full during model download. Handle the error and show a clear message.
+Empty text, missing target applications, invalid process identifiers, and missing Accessibility trust are rejected. Accessibility trust is requested before cross-process injection. When trusted, AX focused-element replacement is attempted first, followed by keyboard-event fallback if AX update fails. There is no clipboard fallback in the current implementation. A target application closing or changing state can produce an injection error; the injector must not guess another target. [10]
 
-### 5.2 Error Message Audit
+### Completion
 
-Review every `AppError` case and ensure:
-- Every error has a human-readable description accessible from the UI.
-- Every error causes the correct overlay error state to appear.
-- No error silently fails without the user knowing.
+Successful injection transitions through `.completed` and then `.idle` after approximately 400 ms. The completion sound is disabled by default and plays one selected native effect—Tink, Pop, or Glass—only after successful injection. Failed transcription, missing permission, empty text, and failed injection never play the sound. [11]
 
-Define `var localizedDescription: String` on `AppError`:
+### Overlay and Settings
+
+The overlay is a non-activating 270×58 pt panel with a 252×48 pt single black capsule, no native panel shadow, and no outer backing/border artifact. `.preparingModel` displays Loading model; `.recording` displays Listening; `.processing` and `.injecting` display Processing; `.completed` displays Done for about 400 ms; errors display a short message. Settings navigation uses explicit buttons, model download progress survives tab changes, active-model deletion is blocked, and the Settings window resets to its intended size when reopened. [12] [13]
+
+## 4. Privacy and security requirements
+
+All microphone capture, temporary recordings, model files, and WhisperKit inference remain local. The application must not send audio or dictated text to a remote endpoint.
+
+Structured logs may contain only metadata needed for diagnosis, such as state names, model identifiers, canonical paths, process IDs, bundle identifiers, durations, byte counts, frame counts, progress, result character counts, and error categories. They must not contain audio samples, spoken phrases, raw transcription, injected text, or full clipboard contents. [14]
+
+Temporary audio files are created in the system temporary directory and are released by the recorder after stopping. Test fixtures must use synthetic or controlled data and must clean up generated files. Signing certificates, private keys, provisioning profiles, App Store Connect keys, and personal tokens must not be committed or printed.
+
+The app is intentionally non-sandboxed in the current design. This is an architectural constraint for global Fn monitoring and cross-process Accessibility interaction, not a claim of App Store compatibility. Any App Store distribution effort would require a separate sandbox/injection design review.
+
+## 5. Error presentation requirements
+
+`AppError` currently has these cases:
 
 ```swift
-extension AppError: LocalizedError {
-    var errorDescription: String? {
-        switch self {
-        case .microphoneUnavailable:
-            return "Microphone is not available. Check System Settings → Privacy → Microphone."
-        case .noAudioDetected:
-            return "No audio was detected. Please speak clearly while holding Fn."
-        case .modelNotInstalled:
-            return "No WhisperKit model is installed. Open Settings → Models to download one."
-        case .modelFailedToLoad:
-            return "Failed to load the selected model. Try restarting VoiceFlow."
-        case .transcriptionFailed:
-            return "Transcription failed. Please try again."
-        case .injectionFailed:
-            return "Could not insert text. Grant Accessibility permission in System Settings."
-        }
-    }
-}
+.microphoneUnavailable
+.noAudioDetected
+.modelNotInstalled
+.modelFailedToLoad
+.transcriptionFailed
+.injectionFailed
+.accessibilityPermissionDenied
 ```
 
-Update `RecordingOverlayView` error state to show `AppError.localizedDescription` instead of a generic "Error" string.
+The overlay maps them to current short messages: `Microphone unavailable`, `No audio detected`, `Model not installed`, `Model not loaded`, `Transcription failed`, `Insertion failed`, and `Allow Accessibility access`. The state manager recovers error states to `.idle` after about two seconds. [15] [16]
 
-### 5.3 Performance Profiling
+The current implementation still contains a small number of legacy `print` statements in state/coordinator paths. This is a known cleanup inconsistency. A hardening pass may replace them with `VoiceFlowLog` calls, but it must preserve privacy-safe metadata and must not change state sequencing. A future error-message redesign must update both `AppError` presentation tests and the overlay tests together.
 
-Measure and document the following timing benchmarks on the target hardware:
+## 6. Performance and memory verification
 
-| Metric | Acceptable Target |
-|--------|-------------------|
-| App launch to menu bar icon visible | < 1.5 seconds |
-| `Fn` press to recording overlay appears | < 200ms |
-| `Fn` release to processing state | < 100ms |
-| Transcription of 5-second audio (tiny model) | < 3 seconds |
-| Transcription of 5-second audio (large-v3) | < 8 seconds |
-| Text injection after transcription | < 100ms |
-| Overlay disappears after injection | ~400ms (by design) |
+Performance should be measured on representative target hardware rather than treated as an unverified promise. Record at least:
 
-Use Instruments (Time Profiler) to identify any unexpected hot paths. Fix any bottleneck that pushes beyond the acceptable targets.
+| Metric | Verification expectation |
+|---|---|
+| Launch to status item | Measure from process launch to visible status item |
+| Fn hold to Listening | Include hold threshold, permission already granted, and model-ready path |
+| Fn release to Processing | Confirm state transition and callback scheduling |
+| Model preload | Measure selected-model load and readiness from logs |
+| Transcription | Measure controlled fixture duration by model variant |
+| Injection | Measure from injection request to successful target update |
+| Completion | Confirm Done lasts approximately 400 ms |
+| Model download | Measure progress and final validation/load duration |
 
-Profile memory usage during a full recording session. Verify WhisperKit resources are released when not in use (not held indefinitely).
+No performance target from the historical specification is considered passed solely because it was written down. The CI workflow validates build/test correctness, not real microphone latency, real model timing, or human-perceived UI quality.
 
-### 5.4 Memory Leak Audit
+Use Instruments for a separate manual memory audit. Pay special attention to `Task` ownership, recorder taps/files, model-selection cancellation, coordinator closures, and the cached WhisperKit session. Tests must prove that stale preload/download/completion tasks cannot overwrite newer state.
 
-- Run the application with the Leaks instrument in Xcode.
-- Ensure no retain cycles exist between `RecordingCoordinator`, `TranscriptionCoordinator`, `InjectionCoordinator`, and `AppStateManager`.
-- All closures captured by coordinators must use `[weak self]` where appropriate.
-- Verify that `AudioRecorder` audio buffers are released after transcription.
-- Verify that `TranscriptionEngine`'s WhisperKit instance is held as a weak reference or released appropriately when the model is changed.
+## 7. Automated CI quality gate
 
-### 5.5 Accessibility Audit
+The contributor workflow is `.github/workflows/ci.yml`, named **CI Quality Gate**. It runs on:
 
-- All interactive controls in the Settings window have VoiceOver labels.
-- Model rows have descriptive accessibility labels (e.g., "Whisper Large V3, 626 megabytes, downloaded, active").
-- Download and Delete buttons have clear accessibility hints.
-- Toggle controls have accessibility values ("on" / "off").
-- The Settings window is fully navigable with keyboard (Tab, Space, Return).
+- Pull requests targeting `main`.
+- Pushes to `main`.
+- Manual `workflow_dispatch` runs.
 
-Use Xcode Accessibility Inspector to audit the Settings window. Document any known VoiceOver limitations in the overlay (the overlay is transient and does not need to be VoiceOver-accessible by design).
+The workflow uses minimum `contents: read` permission, cancels obsolete runs for the same change, runs on `macos-15`, selects Xcode 16.4, and has a 45-minute timeout. [17]
 
-### 5.6 Code Quality Cleanup
+The job performs these checks:
 
-- Remove all debug `print()` statements. Replace with `os.Logger` calls at appropriate levels (`.debug`, `.info`, `.error`).
-- Add documentation comments (`///`) to all public interfaces:
-  - `AppStateManager.transition(to:)`
-  - `AudioRecorder.startRecording()` / `stopRecording()`
-  - `TranscriptionEngine.transcribe(audioURL:)`
-  - `TextInjector.inject(text:into:)`
-  - `ModelManager.downloadModel(id:)`
-- Ensure all files have a header comment with filename and brief description.
-- Remove any commented-out dead code.
+1. Checks out the repository.
+2. Prints the selected Xcode version.
+3. Validates release-relevant project metadata with `xcodebuild -showBuildSettings`.
+4. Runs `bash -n scripts/release.sh`.
+5. Parses both workflow YAML files with Ruby.
+6. Lints the plist and entitlements with `plutil`.
+7. Runs `git diff --check`.
+8. Fails if signing/provisioning material appears in the repository.
+9. Builds an unsigned Debug app with signing disabled.
+10. Runs the complete `voiceflowTests` XCTest suite with signing disabled.
+11. Uploads the `.xcresult` bundle when available.
+12. Writes a job summary identifying `CI Quality Gate` as the required check.
 
-### 5.7 Code Signing & Entitlements
+The project does not currently use SwiftLint, SwiftFormat, or another dedicated lint/format tool. Repository/YAML/shell/plist checks are the current quality checks. Adding a formatter or linter is a separate change and must add a deterministic CI step plus a local reproduction command.
 
-Verify the final entitlements file contains exactly:
+The local reproduction command is:
 
-```xml
-<key>com.apple.security.app-sandbox</key>
-<false/>
-<key>com.apple.security.device.audio-input</key>
-<true/>
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+xcodebuild -project voiceflow.xcodeproj \
+  -scheme voiceflow \
+  -configuration Debug \
+  -derivedDataPath /tmp/voiceflow-tests \
+  -destination 'platform=macOS' \
+  ONLY_ACTIVE_ARCH=YES \
+  -only-testing:voiceflowTests \
+  test CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
 ```
 
-> **Note:** App Sandbox must be OFF for VoiceFlow because:
-> - Global `CGEvent` taps for Fn key detection require non-sandboxed access.
-> - Text injection via `CGEvent` posting to other processes requires non-sandboxed access.
-> - Accessibility API access requires non-sandboxed access.
+## 8. Protected-main merge policy
 
-If targeting Mac App Store distribution, revisit the sandboxing requirement — it may require using only allowed entitlements or changing the injection approach.
+GitHub branch protection for `main` requires a pull request, at least one approval, and the **CI Quality Gate** status check. Contributors must use:
 
-Review and confirm:
-- [ ] Hardened Runtime is enabled.
-- [ ] Microphone entitlement is present.
-- [ ] Code signing identity is configured for the target distribution method (Developer ID or App Store).
-- [ ] Notarization is completed if distributing outside the App Store.
-
-### 5.8 Info.plist Final Audit
-
-Verify `Info.plist` is complete:
-
-| Key | Value |
-|-----|-------|
-| `LSUIElement` | `YES` |
-| `NSMicrophoneUsageDescription` | Clear user-facing string |
-| `CFBundleName` | `VoiceFlow` |
-| `CFBundleIdentifier` | `com.yourname.voiceflow` (or appropriate) |
-| `CFBundleShortVersionString` | Release version (e.g., `1.0.0`) |
-| `CFBundleVersion` | Build number |
-| `NSHumanReadableCopyright` | Copyright string |
-
----
-
-## 6. Files and Components
-
-### Files that may be modified
-
-Any file in the project may be modified for bug fixes, edge case handling, code quality, and documentation.
-
-However, architectural changes to existing interfaces are NOT allowed unless a genuine defect requires it. If an architectural change is needed, document it explicitly before making it.
-
-### Do not add new features
-
-Do not add new files that implement new functionality. Refactoring existing files is fine.
-
----
-
-## 7. Tests
-
-### Final End-to-End Test Suite
-
-Run the complete manual test suite on real hardware:
-
-```
-Scenario 1: Basic push-to-talk
-  Target: TextEdit
-  Input: "The quick brown fox jumps over the lazy dog"
-  Expected: Text appears in TextEdit accurately within acceptable timing.
-
-Scenario 2: Short utterance
-  Target: Notes.app
-  Input: "Hello" (< 1 second)
-  Expected: "Hello" (or "hello") is injected. No noAudioDetected error.
-
-Scenario 3: Long utterance
-  Target: VS Code
-  Input: ~45 seconds of speech (paragraph of text)
-  Expected: Full transcription injected or graceful max-duration cutoff.
-
-Scenario 4: Silence (no speech)
-  Target: Any text field
-  Input: Hold Fn for 3 seconds without speaking.
-  Expected: noAudioDetected error shown in overlay. No crash. Returns to idle.
-
-Scenario 5: Multiple rapid sessions
-  Target: TextEdit
-  Input: Hold Fn 5 times in quick succession (< 1 second apart).
-  Expected: Each session is handled cleanly. No crashes. No state corruption.
-
-Scenario 6: Model switch during use
-  1. Switch model in Settings.
-  2. Immediately hold Fn and speak.
-  Expected: Transcription uses the new model (or handles loading gracefully).
-
-Scenario 7: Microphone revoked
-  1. During the session, revoke microphone in System Settings.
-  2. Hold Fn.
-  Expected: microphoneUnavailable error shown. No crash.
-
-Scenario 8: Accessibility revoked
-  1. During the session, revoke Accessibility in System Settings.
-  2. Complete a recording session.
-  Expected: injectionFailed error shown. No crash. Text is NOT silently lost.
+```text
+create branch → make changes → push branch → open/update PR → CI Quality Gate → review → merge
 ```
 
-### Regression Test
+A failed or incomplete required check blocks the normal merge path. Direct repository-policy bypasses are administrative actions and are not part of the contributor workflow. Changes to the workflow job name must be accompanied by an update to the branch-protection required check; otherwise protected merges can become incorrectly configured.
 
-Re-run all unit tests from Specs 01–06 and confirm all pass.
+## 9. Release workflow
 
----
+The reusable local script is `scripts/release.sh`:
 
-## 8. Acceptance Criteria
-
-All of the following must be true before this spec is complete:
-
-- [ ] All 8 end-to-end scenarios pass without crashes.
-- [ ] Performance benchmarks meet the targets in §5.3.
-- [ ] No memory leaks detected by Instruments.
-- [ ] All `AppError` cases display correct, actionable user messages.
-- [ ] Settings window is fully keyboard-navigable.
-- [ ] All VoiceOver labels are in place.
-- [ ] All debug `print()` statements replaced with `os.Logger`.
-- [ ] Public interfaces have documentation comments.
-- [ ] Code is signed with a valid Developer ID or App Store certificate.
-- [ ] If distributing outside the App Store: app is notarized and passes `spctl` check.
-- [ ] `Info.plist` audit passes.
-- [ ] All unit tests from Specs 01–06 still pass.
-- [ ] No known crashes or state machine corruptions.
-
----
-
-## 9. Completion Gate
-
-**VoiceFlow is DONE when:**
-
-1. All acceptance criteria above are checked off.
-2. All end-to-end scenarios pass on real hardware.
-3. Performance benchmarks are within targets.
-4. No known bugs or crashes remain.
-5. The application is code-signed and ready for distribution.
-
----
-
-## 10. Handoff
-
-The completed VoiceFlow application is handed off to production. It delivers:
-
-**User experience:**
-> Hold `Fn` → Speak → Release `Fn` → Transcribed text appears in the focused application.
-
-**Architecture summary:**
-
+```bash
+./scripts/release.sh --check
+./scripts/release.sh --unsigned 1.0.0
+./scripts/release.sh 1.0.0
 ```
+
+`--check` validates the signed Release prerequisites without building or submitting. `--unsigned` builds Release with signing disabled, creates a UDZO DMG containing `VoiceFlow.app` and an Applications shortcut, verifies the DMG structure, and writes `dist/SHA256SUMS.txt`. It skips signature verification, notarization, stapling, and Gatekeeper assessment. The unsigned path requires no Apple credentials.
+
+The default version path requires a Developer ID identity and either a notarization keychain profile or App Store Connect API-key credentials. It builds with Release Hardened Runtime settings, verifies the application signature, creates the DMG, submits it with `xcrun notarytool`, staples and validates the ticket with `xcrun stapler`, mounts the final DMG, verifies the signed app and Gatekeeper assessment, and only then generates the checksum. [18]
+
+The GitHub workflow `.github/workflows/release.yml` runs on pushed `v*` tags and manual dispatch. Manual inputs are `unsigned`, `checks`, or `production-release` plus an optional semantic version. The current behavior is:
+
+| Mode/event | Build | DMG | GitHub Release | Apple credentials |
+|---|---|---|---|---|
+| Tag `v1.0.0` | Unsigned | Yes | Yes, unsigned-labeled artifact | Not required |
+| Manual `unsigned` | Unsigned | Yes | Yes, unsigned-labeled artifact | Not required |
+| Manual `checks` | Unsigned Release app only | No | No | Not required |
+| Manual `production-release` | Signed/notarized | Yes | Yes | Required |
+
+The workflow runs XCTest before release work. It uploads DMG/checksum artifacts and creates a GitHub Release for unsigned or production modes. The release command uses explicit signed/unsigned branches and must remain safe under `set -euo pipefail`.
+
+## 10. Unsigned DMG installation guidance
+
+An unsigned/unnotarized DMG can be distributed, but macOS may show an unidentified-developer or verification warning. The release page and documentation must label it as unsigned. A user can generally install it by dragging VoiceFlow to Applications, then Control-clicking `VoiceFlow.app`, selecting **Open**, and confirming. If macOS retains the block, the user can review **System Settings → Privacy & Security → Open Anyway**. Users should install software only from a trusted release source and verify the published checksum before opening it.
+
+This guidance does not bypass macOS security silently and does not claim that the app has notarization or Developer ID trust.
+
+## 11. Tests and final verification
+
+The current repository contains 102 XCTest methods distributed across state, audio, transcription, injection, overlay, Settings, package-import, and baseline tests. The complete test target is the primary regression gate. [19]
+
+Final verification must include:
+
+- All automated XCTest tests pass locally and in CI.
+- Debug build and Release unsigned build succeed with signing disabled.
+- Project metadata, plist/entitlements, workflow YAML, shell syntax, and credential hygiene checks pass.
+- Real hardware verifies microphone permission, Fn hold threshold, model readiness, overlay focus safety, Accessibility injection, Settings persistence, model download validation, completion sound behavior, and Light/Dark menu-bar icon rendering.
+- The core TextEdit pipeline is repeated after any UI or Settings change.
+- The unsigned DMG mounts and passes `hdiutil verify`; its contents include `VoiceFlow.app` and an Applications shortcut.
+- Signed distribution, stapling, and Gatekeeper assessment are verified only when real Apple credentials are available.
+
+## 12. Acceptance criteria
+
+- The application builds with the documented target, bundle ID, entitlements, and Release settings.
+- All automated tests pass with zero failures.
+- CI runs on PRs to `main` and reports a single required `CI Quality Gate` check.
+- Branch protection requires the CI check and pull-request approval before normal merging.
+- No dedicated lint/format tool is claimed unless one is actually configured; current repository quality checks remain documented.
+- Privacy-safe logging contains no audio, speech, transcript, or injected text.
+- Known edge cases are mapped to safe errors or explicitly recorded as current limitations.
+- Model download → structural validation → exact-folder load validation → detection → preload → transcription remains consistent.
+- Completion sound remains success-only and disabled by default.
+- Overlay remains focus-safe, compact, single-surface, and state-synchronized.
+- Unsigned release mode creates a mountable DMG and checksum without Apple secrets.
+- Unsigned tags/manual releases publish the DMG and checksum to GitHub Releases and clearly label the artifact.
+- Signed mode remains optional and fails early with actionable missing-credential errors when selected without credentials.
+- No signing secrets or local diagnostic probes are committed.
+
+## 13. Completion gate
+
+VoiceFlow is production-ready for the chosen distribution class only when:
+
+1. The full XCTest and CI quality gates pass.
+2. Protected-main merge requirements are active and verified.
+3. Manual real-hardware checks pass for microphone, Fn, model readiness, overlay, Accessibility, Settings, and completion feedback.
+4. The selected distribution mode is explicitly identified as unsigned or signed/notarized.
+5. An unsigned DMG is mountable and checksum-verified, or a signed DMG additionally passes signature, stapling, notarization, and Gatekeeper checks.
+6. Any remaining limitations—such as non-sandboxed architecture, absent maximum-duration cutoff, no clipboard fallback, and remaining legacy `print` diagnostics—are disclosed rather than hidden.
+
+## 14. Handoff
+
+After this gate, future work should be specified as a new change rather than silently modifying the seven-stage sequence. The stable architecture is:
+
+```text
 FnKeyMonitor
     ↓
-AudioRecorder ──── audioLevel ────→ WaveformView (UI)
+AudioRecorder ── audioLevel ──→ OverlayWindowController / WaveformView
     ↓
-RecordingCoordinator
+RecordingCoordinator ── model readiness + target app capture
     ↓
-TranscriptionEngine (WhisperKit)
+TranscriptionEngine ── canonical model resolution + cached WhisperKit session
     ↓
 TextProcessor
     ↓
 TranscriptionCoordinator
     ↓
-TextInjector (CGEvent)
+TextInjector ── AX first, keyboard fallback when trusted
     ↓
-AppStateManager ──── currentState ──→ OverlayWindowController (UI)
-                                   → MenuBarController (UI)
+InjectionCoordinator ── success-only sound + completed timing
+    ↓
+AppStateManager ──→ OverlayWindowController
+                  └─→ MenuBarController / MenuBarPopoverView
+
+ModelManager ──→ TranscriptionEngine
+             └─→ Settings / ModelDownloadCoordinator
 ```
 
-**Component ownership:**
+## References
 
-| Spec | What was built |
-|------|---------------|
-| 01 | App skeleton, state machine, menu bar |
-| 02 | Fn key detection, microphone capture |
-| 03 | WhisperKit transcription, model management, text cleanup |
-| 04 | Text injection, end-to-end core pipeline |
-| 05 | Recording overlay, waveform, animations |
-| 06 | Settings window, model management UI |
-| 07 | Production hardening, edge cases, distribution |
+[1]: ../scripts/release.sh "VoiceFlow reusable release script"
+[2]: ../docs/release.md "VoiceFlow release and Gatekeeper guidance"
+[3]: ../voiceflow.xcodeproj/project.pbxproj "VoiceFlow Xcode target and build settings"
+[4]: ../voiceflow/Resources/Info.plist "VoiceFlow bundle metadata"
+[5]: ../voiceflow/Resources/voiceflow.entitlements "VoiceFlow entitlements"
+[6]: ../voiceflow/Core/Audio/FnKeyMonitor.swift "Fn hold monitor"
+[7]: ../voiceflow/Core/Audio/RecordingCoordinator.swift "Recording readiness and cancellation"
+[8]: ../voiceflow/Core/Transcription/ModelManager.swift "Canonical model management"
+[9]: ../voiceflow/Core/Transcription/TranscriptionEngine.swift "WhisperKit session lifecycle"
+[10]: ../voiceflow/Core/Injection/TextInjector.swift "Accessibility-safe text injection"
+[11]: ../voiceflow/Core/Injection/InjectionCoordinator.swift "Completion state and sound"
+[12]: ../voiceflow/UI/Overlay/OverlayWindowController.swift "Overlay panel behavior"
+[13]: ../voiceflow/UI/Settings/SettingsWindowController.swift "Settings window lifecycle"
+[14]: ../voiceflow/Core/Logging/VoiceFlowLogger.swift "Privacy-safe logging categories"
+[15]: ../voiceflow/Core/State/AppState.swift "Shared error cases"
+[16]: ../voiceflow/UI/Overlay/RecordingOverlayView.swift "Overlay error messages"
+[17]: ../.github/workflows/ci.yml "Contributor CI quality gate"
+[18]: ../.github/workflows/release.yml "Release workflow"
+[19]: ../voiceflowTests "VoiceFlow XCTest target"
+[20]: https://developer.apple.com/documentation/security/notarizing_macos_software_before_distribution "Apple notarization guidance"
+
+## Implementation inconsistency register
+
+The historical specification described only signed/notarized distribution and required removing all `print` calls, a maximum recording duration, retry-on-memory-pressure behavior, clipboard fallback injection, and broad VoiceOver requirements. The current implementation does not provide all of those features. This document records them as limitations or future hardening work rather than misrepresenting them as complete.
+
+The historical specification also used a placeholder bundle identifier and an old snapshot-cache model path. The current source of truth is `dha-aa.voiceflow` and the direct Hub layout under the app-owned model root. The current repository additionally supports a credential-free unsigned DMG release and a protected-main CI quality gate.
+
+## Completion gate
+
+Specification 07 is complete when the automated CI/build/test checks and the selected distribution-mode verification pass, all known current limitations are documented, and no release or security claim exceeds what the actual artifact and available credentials prove.

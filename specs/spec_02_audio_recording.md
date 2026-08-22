@@ -1,319 +1,170 @@
-# SPEC 02 — Audio Recording & Fn Key Detection
+# SPEC 02 — Fn Push-to-Talk and Local Audio Recording
 
-## 1. Purpose
+## Status and dependency
 
-This specification builds the audio capture engine and the global `Fn` key monitor — the two core input mechanisms of VoiceFlow.
+Specification 02 extends the foundation from Specification 01. It defines the current input and audio boundary consumed by Specifications 03–07. The implementation is deliberately local: microphone samples are written to a temporary WAV file and are never sent to a remote service or written to logs.
 
-When the user holds `Fn`, audio capture starts. When the user releases `Fn`, audio capture stops. The captured audio buffer is prepared and handed to the next stage (Spec 03: Transcription).
+The current interaction is **sustained push-to-talk**, not a toggle. A short `Fn` tap is ignored. A hold emits one key-down event after the hold threshold, starts the recording flow, and a release emits one key-up event that stops recording and hands a temporary audio URL to the transcription stage. [1] [2]
 
-This stage proves that the push-to-talk interaction model works independently of any UI. By the end of this spec, holding `Fn` starts recording, releasing it stops recording, and the captured audio is a valid in-memory buffer ready for transcription — all testable without any overlay or UI.
+## 1. Goals
 
----
+This stage provides a reliable global Fn monitor, microphone permission handling, 16 kHz mono PCM recording, normalized audio-level metering, and the `RecordingCoordinator` handoff to transcription. It must preserve the application that was focused when the sustained Fn hold began.
 
-## 2. Scope
+This stage does not perform WhisperKit loading or transcription, text injection, overlay rendering, Settings, or model downloading. Those later stages consume the interfaces documented here.
 
-- Implement a `FnKeyMonitor` that detects `Fn` press-and-hold and release using a global `CGEvent` tap or `NSEvent` global monitor.
-- Implement an `AudioRecorder` that captures microphone audio into a PCM buffer or temporary audio file.
-- Request microphone permission on first use and handle denial gracefully.
-- Drive `AppStateManager` state transitions:
-  - `Fn` held → `transition(to: .recording)`
-  - `Fn` released → `transition(to: .processing)`
-  - Error (mic denied, etc.) → `transition(to: .error(...))`
-- Expose the captured audio buffer via a stable interface that Spec 03 consumes.
-- Write unit and integration tests for the recording pipeline.
+## 2. Components and contracts
 
----
+| Component | Location | Current responsibility |
+|---|---|---|
+| `FnKeyMonitor` | `voiceflow/Core/Audio/FnKeyMonitor.swift` | Global `.flagsChanged` monitoring through `NSEvent.addGlobalMonitorForEvents` |
+| `AudioRecorder` | `voiceflow/Core/Audio/AudioRecorder.swift` | AVAudioEngine input capture, conversion, temporary WAV output, and audio metering |
+| `AudioRecording` | Same file | Testable recorder abstraction used by `RecordingCoordinator` |
+| `RecordingCoordinator` | `voiceflow/Core/Audio/RecordingCoordinator.swift` | Coordinates Fn events, permission, model readiness, recording, target-app capture, and callbacks |
+| `ModelReadinessChecking` | Same file | Optional async gate implemented by `TranscriptionEngine` |
 
-## 3. Out of Scope
+`RecordingCoordinator.onRecordingComplete` has the stable signature:
 
-Do NOT implement any of the following in this specification:
+```swift
+var onRecordingComplete: ((URL, NSRunningApplication?) -> Void)?
+```
 
-- WhisperKit model loading or transcription (Spec 03).
-- Text injection (Spec 04).
-- The recording overlay UI (Spec 05).
-- Settings window (Spec 06).
-- Model management or downloading.
-- Audio-level metering for UI visualization (Spec 05 will consume audio levels from the recorder, but do not build the UI).
-- Any waveform or visual feedback.
+The callback receives a real temporary audio URL and the application that was frontmost at the beginning of the sustained hold. The target may be `nil`; later injection must reject that case rather than guessing a target.
 
-You MAY expose an audio level publisher (e.g., `@Published var audioLevel: Float`) from `AudioRecorder` so Spec 05 can observe it — but do not render anything with it in this spec.
+## 3. Fn monitoring
 
----
+`FnKeyMonitor` installs a global flags-changed monitor when `start()` is called and removes it in `stop()`. It checks `event.modifierFlags.contains(.function)` and does not use a key-code toggle.
 
-## 4. Dependencies
+The default hold threshold is **0.25 seconds**. On a transition from not pressed to pressed, the monitor schedules a delayed key-down callback. If Fn is released before the threshold, the work item is cancelled and neither callback fires. If the threshold elapses while Fn remains pressed, `onFnKeyDown` fires exactly once. A corresponding release then fires `onFnKeyUp` once. Repeated pressed events while already pressed are ignored.
 
-**Spec 01 must be complete and verified before starting this spec.**
-
-Required from Spec 01:
-- `AppState` enum — `.idle`, `.recording`, `.processing`, `.error` cases.
-- `AppStateManager` — `transition(to:)` method.
-- `Info.plist` — `NSMicrophoneUsageDescription` already set.
-- Hardened Runtime entitlement — `com.apple.security.device.audio-input = YES` already set.
-- `Core/Audio/` directory exists.
-
-**Framework dependencies:**
-- `AVFoundation` — microphone capture.
-- `CoreGraphics` / `AppKit` — `CGEvent` tap or `NSEvent` global monitor for `Fn` key detection.
-- No new Swift Package dependencies needed.
-
-**Assumptions:**
-- The microphone permission description and entitlement were correctly set in Spec 01.
-- `AppStateManager` is injected and available.
-
----
-
-## 5. Implementation Requirements
-
-### 5.1 Fn Key Monitor
-
-Implement `FnKeyMonitor` in `Core/Audio/FnKeyMonitor.swift`.
-
-The `Fn` key is a system-level key on Apple keyboards. Detection approach:
-- Use `NSEvent.addGlobalMonitorForEvents(matching:)` with `.flagsChanged` to detect modifier key changes.
-- Check for the `.function` flag in `NSEvent.modifierFlags` to identify the `Fn` key specifically.
-- A single tap must NOT trigger recording — only a sustained hold should start recording.
-
-> **Implementation note on Fn detection:**  
-> `NSEvent` global monitors for `.flagsChanged` can detect `Fn` on Apple Silicon and Intel Macs via the `.function` modifier flag. If this approach proves unreliable in testing, fall back to a `CGEvent` tap with `kCGEventFlagsChanged`. Document whichever approach is used and why.
-
-The `FnKeyMonitor` must:
-- Emit a `fnKeyDown` event when `Fn` is first pressed.
-- Emit a `fnKeyUp` event when `Fn` is released.
-- Call a closure or delegate method for each event.
-- Handle edge cases: `Fn` held while state is NOT `.idle` (ignore second hold to prevent task races and audio overwrite), `Fn` released before audio starts (abort gracefully).
+The test seam `handleFlagsChangedForTesting(isPressed:)` exercises the same state machine without synthesizing system events. The production monitor does not itself decide whether the application is idle; `RecordingCoordinator` performs that guard.
 
 ```swift
 final class FnKeyMonitor {
     var onFnKeyDown: (() -> Void)?
     var onFnKeyUp: (() -> Void)?
 
-    func start() { ... }
-    func stop() { ... }
+    init(holdThreshold: TimeInterval = 0.25)
+    func start()
+    func stop()
+    func handleFlagsChangedForTesting(isPressed: Bool)
 }
 ```
 
-### 5.2 Audio Recorder
+## 4. Audio recording
 
-Implement `AudioRecorder` in `Core/Audio/AudioRecorder.swift`.
+`AudioRecorder` uses `AVAudioEngine` and an input-node tap. It requests microphone permission using `AVCaptureDevice.requestAccess(for: .audio)` through its injectable `permissionRequester` closure. The recorder does not begin engine startup until its permission result is granted.
 
-Responsibilities:
-- Request microphone permission using `AVAudioApplication.requestRecordPermission` (macOS 14) or `AVCaptureDevice.requestAccess(for: .audio)`.
-- Start capturing microphone audio when `startRecording()` is called.
-- Stop capturing and return the recorded audio when `stopRecording()` is called.
-- Handle microphone permission denial by calling `AppStateManager.transition(to: .error(.microphoneUnavailable))`.
+The output format is created as non-interleaved PCM float32 at 16,000 Hz and one channel. The input format is obtained from the microphone input node. If necessary, `AVAudioConverter` converts each input buffer to the target format. The recorder writes converted buffers to a unique file named `recording_<UUID>.wav` in `FileManager.default.temporaryDirectory`.
 
-Audio format:
-- Sample rate: 16,000 Hz (required by WhisperKit).
-- Channels: 1 (mono).
-- Format: PCM float32.
+`startRecording()` is idempotent when already recording. It creates the target format, input engine, converter, WAV file, input tap, and running engine. Setup failures remove the tap, release the engine/file references, remove the incomplete output file, and throw a recorder error.
 
-Output:
-- The recorded audio is saved to a temporary file (`FileManager.default.temporaryDirectory`) or held in memory as a buffer.
-- The output type must be `URL` (path to a `.wav` or `.m4a` file) or `AVAudioPCMBuffer`, whichever integrates more cleanly with WhisperKit's `transcribe(audioPath:)` or `transcribe(audioPCMBuffer:)` API.
+`stopRecording()` stops the engine, removes the tap, releases the file and engine, resets `isRecording` and `audioLevel`, and returns the recorded URL. If no active recording exists, it returns `nil`. It records only metadata such as an opaque audio identifier, duration, buffer count, frame count, byte count, and write-error count. It never logs samples or spoken content.
 
-Audio level metering:
-- Expose `var audioLevel: Float` (value between 0.0 and 1.0) updated continuously during recording.
-- This property will be observed by the UI in Spec 05 to drive the waveform visualizer.
+`audioLevel` is an observable normalized RMS-derived value clamped to `0...1`; the recorder updates it from converted buffers. The overlay later samples this value at 30 Hz. The recorder does not implement a maximum duration or silence classifier. Silence is mapped to `noAudioDetected` by the transcription stage when no usable text is produced.
 
-```swift
-@Observable
-final class AudioRecorder {
-    private(set) var audioLevel: Float = 0.0
-    private(set) var isRecording: Bool = false
+## 5. RecordingCoordinator sequencing
 
-    func requestPermission() async -> Bool { ... }
-    func startRecording() throws { ... }
-    func stopRecording() -> URL? { ... }   // returns path to recorded audio file
-}
+The coordinator is main-actor isolated and installs weak callback closures on the key monitor. It must be constructed with the shared `AppStateManager`, an `AudioRecording`, the `FnKeyMonitor`, and optionally a `ModelReadinessChecking` implementation.
+
+The production sequence is:
+
+```text
+Fn pressed
+  → FnKeyMonitor waits 250 ms
+  → RecordingCoordinator confirms state == idle
+  → capture NSWorkspace.shared.frontmostApplication
+  → request microphone permission
+  → if a readiness checker exists: state = preparingModel and await readiness
+  → if Fn is still held: start AudioRecorder
+  → state = recording
+
+Fn released after recording starts
+  → stop AudioRecorder
+  → if URL is nil: state = error(noAudioDetected)
+  → otherwise state = processing
+  → onRecordingComplete(URL, capturedTargetApplication)
 ```
 
-### 5.3 Recording Coordinator
+The coordinator ignores Fn-down when the shared state is not `.idle` or when a hold is already active. It does not overwrite the prior target application or audio session. If the user releases Fn while permission or model readiness is pending, the startup task is cancelled, no recording completion callback is sent, and the state returns or remains `.idle`; this is normal cancellation rather than a microphone error.
 
-Implement `RecordingCoordinator` in `Core/Audio/RecordingCoordinator.swift`.
+Before recording begins, the optional readiness checker is called after permission is granted. The coordinator shows `.preparingModel` while waiting. Readiness failure maps to `.error(.modelFailedToLoad)`. A recorder permission denial or startup failure maps to `.error(.microphoneUnavailable)`. The central `AppStateManager` later recovers error states to `.idle`.
 
-This class wires `FnKeyMonitor` and `AudioRecorder` together and drives `AppStateManager`.
+`stop()` stops monitoring, cancels pending startup, clears the held state and target application, and stops an active recorder if needed. It is safe to call during shutdown.
 
-```swift
-final class RecordingCoordinator {
-    init(stateManager: AppStateManager, recorder: AudioRecorder, keyMonitor: FnKeyMonitor) { ... }
+## 6. Implementation requirements
 
-    func start() { ... }   // begin monitoring for Fn key
-    func stop() { ... }    // stop monitoring
+The implementation must preserve these rules:
 
-    // Expose the completed audio URL and the target application for Spec 03 to consume
-    var onRecordingComplete: ((URL, NSRunningApplication?) -> Void)?
-}
+1. All microphone access and audio processing remain local.
+2. The default Fn hold threshold remains 0.25 seconds unless a deliberate product change is specified.
+3. A tap shorter than the threshold must not start recording.
+4. The target application is captured at sustained Fn key-down, before recording startup can change focus.
+5. Recording cannot begin until permission is granted and, in production, the selected model is ready.
+6. An early release cancels pending startup without emitting a false transcription callback.
+7. Audio is written in a WhisperKit-compatible 16 kHz, mono, PCM float32 WAV format.
+8. Test doubles must be injectable through `AudioEngineProviding`, `AudioRecording`, and the permission closure.
+9. Logs may contain only privacy-safe metadata; never audio, speech, transcript, or full file contents.
+
+## 7. Tests and verification
+
+The current executable tests are:
+
+| Test file | Required coverage |
+|---|---|
+| `voiceflowTests/Audio/FnKeyMonitorTests.swift` | Delayed key-down, release callback, short-tap suppression, duplicate-down suppression |
+| `voiceflowTests/Audio/RecordingCoordinatorTests.swift` | Readiness wait, preparing state, recording start, processing transition, callback URL, non-idle rejection, early-release cancellation, permission/start errors |
+| `voiceflowTests/Audio/RecordingPipelineIntegrationTests.swift` | Full simulated Fn cycle, synthetic audio emission, non-empty output file, 16 kHz sample rate, mono channel count |
+
+The local test command is:
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+xcodebuild -project voiceflow.xcodeproj \
+  -scheme voiceflow \
+  -configuration Debug \
+  -destination 'platform=macOS' \
+  ONLY_ACTIVE_ARCH=YES \
+  -only-testing:voiceflowTests \
+  test CODE_SIGNING_ALLOWED=NO
 ```
 
-Internal logic:
-1. `FnKeyMonitor.onFnKeyDown` fires → **Check if `stateManager.currentState == .idle`.** 
-   - If YES: save `NSWorkspace.shared.frontmostApplication` → call `AudioRecorder.startRecording()` → call `stateManager.transition(to: .recording)`.
-   - If NO: explicitly ignore the input (do not start a new recording, do not overwrite the buffer).
-2. `FnKeyMonitor.onFnKeyUp` fires → If currently `.recording`, call `AudioRecorder.stopRecording()` → call `stateManager.transition(to: .processing)` → call `onRecordingComplete(audioURL, savedApplication)`.
-3. Any error → call `stateManager.transition(to: .error(...))`.
+Manual verification on real hardware must confirm that a short Fn tap does nothing, holding Fn eventually shows the recording flow, microphone denial produces a microphone error, releasing before model readiness does not create a recording, and a sustained hold produces a temporary WAV that later reaches `.processing`. Do not inspect or distribute real recordings as part of automated CI.
 
----
+## 8. Acceptance criteria
 
-## 6. Files and Components
+- `FnKeyMonitor` uses the global `.flagsChanged` monitor and the `.function` modifier.
+- The default hold threshold is 250 ms and short taps produce no callbacks.
+- A sustained hold produces exactly one down callback and one release callback.
+- Permission is requested before microphone engine startup.
+- Permission denial maps to `.error(.microphoneUnavailable)`.
+- The recorder writes temporary 16 kHz mono PCM float32 WAV data and resets cleanly after stopping.
+- The recorder exposes a normalized `audioLevel` between 0 and 1.
+- `RecordingCoordinator` captures the frontmost application on sustained hold.
+- Recording waits for `ModelReadinessChecking` when the production engine is supplied.
+- The pre-recording state is `.preparingModel`, not `.recording`, while readiness is pending.
+- Early release cancels startup without calling `onRecordingComplete`.
+- Successful release transitions to `.processing` and invokes `onRecordingComplete` with the audio URL and captured target.
+- All audio-stage tests pass.
+- No audio or speech content appears in logs.
 
-### Files to create
+## 9. Handoff to Specification 03
 
-| File | Purpose |
-|------|---------|
-| `Core/Audio/FnKeyMonitor.swift` | Global `Fn` key press/release detection |
-| `Core/Audio/AudioRecorder.swift` | Microphone capture, audio level metering |
-| `Core/Audio/RecordingCoordinator.swift` | Wires key monitor + recorder + state transitions |
+Specification 03 receives a temporary WAV URL in the target format, the captured `NSRunningApplication?`, and a state already set to `.processing`. It must not reimplement Fn monitoring or microphone capture. It must add model resolution/readiness and transcription while preserving the early-release and target-capture contracts.
 
-### Files that may be modified
+## References
 
-| File | Permitted change |
-|------|----------------|
-| `App/VoiceFlowApp.swift` | Instantiate `RecordingCoordinator` and call `.start()` |
-| `App/AppDelegate.swift` | Same — start coordinator on app launch |
+[1]: ../voiceflow/Core/Audio/FnKeyMonitor.swift "Fn key monitor implementation"
+[2]: ../voiceflow/Core/Audio/AudioRecorder.swift "Audio recorder implementation"
+[3]: ../voiceflow/Core/Audio/RecordingCoordinator.swift "Recording coordinator implementation"
+[4]: ../voiceflow/Core/State/AppState.swift "Shared application states and errors"
+[5]: ../voiceflowTests/Audio/FnKeyMonitorTests.swift "Fn monitor tests"
+[6]: ../voiceflowTests/Audio/RecordingCoordinatorTests.swift "Recording coordinator tests"
+[7]: ../voiceflowTests/Audio/RecordingPipelineIntegrationTests.swift "Audio pipeline integration test"
 
-### Files that must NOT be modified
+## Implementation inconsistency register
 
-| File | Reason |
-|------|--------|
-| `Core/State/AppState.swift` | Stable interface from Spec 01 |
-| `Core/State/AppStateManager.swift` | Stable interface from Spec 01 |
-| `UI/MenuBar/MenuBarController.swift` | UI is not touched in this spec |
+The historical specification assumed that Fn-down immediately entered `.recording`, but the current production flow correctly waits for microphone permission and selected-model readiness and exposes `.preparingModel`. It also assumed that a recording object itself would classify silence; the current implementation leaves silence/no-text classification to transcription. No maximum recording duration is currently implemented. These are documented current behaviors, not hidden requirements.
 
-### Reserved (do not create yet)
+## Completion gate
 
-- `Core/Transcription/` — Spec 03
-- `Core/Injection/` — Spec 04
-- `UI/Overlay/` — Spec 05
-- `UI/Settings/` — Spec 06
-
----
-
-## 7. Tests
-
-Write and run these tests before marking this spec complete.
-
-### Unit Tests: `FnKeyMonitorTests.swift`
-
-```
-test_fnKeyMonitor_callsOnKeyDown_whenFnPressed
-  Simulate a flagsChanged event with .function flag set.
-  Assert onFnKeyDown closure is called.
-
-test_fnKeyMonitor_callsOnKeyUp_whenFnReleased
-  Simulate a flagsChanged event with .function flag cleared.
-  Assert onFnKeyUp closure is called.
-
-test_fnKeyMonitor_doesNotFire_onSingleTapWithoutHold
-  (If debounce/hold-detection logic is implemented)
-  Simulate a very short key press (< threshold). Assert no recording started.
-```
-
-### Unit Tests: `AudioRecorderTests.swift`
-
-```
-test_audioRecorder_initialState_notRecording
-  Create AudioRecorder. Assert isRecording == false.
-
-test_audioRecorder_startRecording_setsIsRecording
-  Call startRecording(). Assert isRecording == true.
-  (Mock AVAudioEngine or use a test audio session.)
-
-test_audioRecorder_stopRecording_setsIsRecordingFalse
-  Start, then stop. Assert isRecording == false.
-
-test_audioRecorder_stopRecording_returnsNonNilURL
-  Start, record briefly, stop. Assert returned URL is not nil.
-  Assert the file exists at the returned URL.
-
-test_audioRecorder_audioLevel_updatesWhileRecording
-  Start recording. Wait briefly. Assert audioLevel > 0.0.
-  (May require a real device test or a mocked audio input.)
-```
-
-### Unit Tests: `RecordingCoordinatorTests.swift`
-
-```
-test_coordinator_transitionsToRecording_onFnDown
-  Trigger onFnKeyDown. Assert AppStateManager.currentState == .recording.
-
-test_coordinator_transitionsToProcessing_onFnUp
-  Trigger onFnKeyDown, then onFnKeyUp.
-  Assert AppStateManager.currentState == .processing.
-
-test_coordinator_callsOnRecordingComplete_withAudioURL
-  Trigger full Fn-down → Fn-up cycle.
-  Assert onRecordingComplete is called with a non-nil URL.
-```
-
-### Integration Test: Full Recording Pipeline
-
-```
-test_fullRecordingPipeline
-  1. Start RecordingCoordinator.
-  2. Simulate Fn key down.
-  3. Assert state == .recording.
-  4. Wait 1 second.
-  5. Simulate Fn key up.
-  6. Assert state == .processing.
-  7. Assert onRecordingComplete is called with a valid audio file URL.
-  8. Assert audio file exists and has non-zero size.
-```
-
-### Manual Verification
-
-```
-- Build and run the app.
-- Hold Fn. Confirm terminal/console logs show: "State → recording".
-- Speak a few words.
-- Release Fn. Confirm console shows: "State → processing", then "Recording complete: <path>".
-- Open the audio file at the logged path in QuickTime Player. Confirm your voice is audible.
-- Deny microphone permission in System Settings. Relaunch. Hold Fn.
-  Confirm console shows: "State → error(microphoneUnavailable)".
-```
-
----
-
-## 8. Acceptance Criteria
-
-All of the following must be true before this spec is complete:
-
-- [ ] `FnKeyMonitor` detects `Fn` press and release on the test machine.
-- [ ] Holding `Fn` transitions `AppStateManager` to `.recording`.
-- [ ] Releasing `Fn` transitions `AppStateManager` to `.processing`.
-- [ ] `AudioRecorder` captures audio at 16,000 Hz, mono, PCM format.
-- [ ] `stopRecording()` returns a valid `URL` pointing to a non-empty audio file.
-- [ ] The recorded audio file is playable and contains recognizable speech.
-- [ ] Microphone permission denial transitions state to `.error(.microphoneUnavailable)`.
-- [ ] `audioLevel` updates continuously while recording (verified via logs).
-- [ ] All unit tests pass.
-- [ ] Integration test passes.
-- [ ] Menu bar icon updates: shows `mic.fill` during `.recording`, `waveform` during `.processing`.
-
----
-
-## 9. Completion Gate
-
-**This spec is NOT complete until:**
-
-1. All acceptance criteria are checked off.
-2. All unit tests and the integration test pass.
-3. Manual verification confirms real microphone audio is captured and the file is playable.
-4. The `RecordingCoordinator.onRecordingComplete` interface is stable and ready for Spec 03 to consume.
-5. `Fn` key detection works reliably on the target hardware.
-
-**Do not proceed to Spec 03 until this gate passes.**
-
----
-
-## 10. Handoff to Spec 03
-
-Spec 03 receives these stable, verified components:
-
-| Component | What Spec 03 can rely on |
-|-----------|--------------------------|
-| `RecordingCoordinator.onRecordingComplete` | Called with a valid `URL` and the target `NSRunningApplication?` after every recording session |
-| `AudioRecorder.stopRecording()` | Returns a `URL` to a PCM audio file at 16,000 Hz mono |
-| `AppStateManager` | In `.processing` state when transcription should begin |
-| Audio file format | 16,000 Hz, mono, PCM — WhisperKit-compatible |
-
-Spec 03 will connect to `RecordingCoordinator.onRecordingComplete` and pass the audio URL to WhisperKit for transcription, threading the target application through.
+Do not begin Specification 03 until the Fn monitor, recorder, coordinator readiness/cancellation behavior, and audio-format integration test pass. The gate proves the audio boundary; it does not require a WhisperKit model or real transcription yet.

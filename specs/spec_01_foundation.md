@@ -1,89 +1,72 @@
-# SPEC 01 — Core Foundation & Application Architecture
+# SPEC 01 — Foundation, Application Architecture, and Shared State
 
-## 1. Purpose
+## Status and authority
 
-This is the first stage of the VoiceFlow project.
+This document is the first stage in the VoiceFlow engineering sequence and defines the contracts consumed by Specifications 02–07. It describes the **current implementation**, not the historical bootstrap requirements. Later specifications may extend the contracts documented here, but they must not silently contradict them.
 
-VoiceFlow is a macOS menu bar application that lets users dictate text into any focused application by holding the `Fn` key, speaking, and releasing it. The transcribed text is then injected automatically into the focused text field.
+VoiceFlow is a native macOS menu-bar agent. The user holds `Fn`, speaks into a local microphone recording, releases `Fn`, and receives locally transcribed text in the application that was focused when the hold began. The application has no normal launch window and does not appear in the Dock. Its primary surfaces are the menu-bar status item, a transient popover, a non-activating recording overlay, and an on-demand Settings window. [1] [2]
 
-This specification establishes the Xcode project, Swift Package Manager dependencies, app entry point, menu bar infrastructure, and the app-level state machine. Every subsequent specification depends on this foundation.
+## 1. Goals
 
-This stage produces no visible recording, transcription, or injection functionality. It only builds the structural skeleton that later specs will fill in.
+The foundation must provide a stable macOS application shell, dependency injection boundary, shared state model, menu-bar infrastructure, privacy-safe logging categories, and a predictable lifecycle. It must be possible for later stages to add recording, model loading, injection, overlay, Settings, and release automation without recreating the application shell.
 
----
+The foundation does **not** by itself perform recording, model loading, transcription, text injection, overlay presentation, or model management. Those behaviors are defined in Specifications 02–07, although the current application composition wires all completed components together at launch.
 
-## 2. Scope
+## 2. Dependency and implementation baseline
 
-- Create the Xcode project as a macOS menu bar app (`LSUIElement`, no Dock icon).
-- Configure Swift Package Manager to include the `argmax-oss-swift` package with the `WhisperKit` product.
-- Define the `AppState` enum covering all application states.
-- Implement `AppStateManager` as an observable state container that publishes the current state.
-- Implement the menu bar icon that reflects idle/recording/processing states with static icons (no animation yet).
-- Implement a minimal menu bar popover with placeholder content.
-- Implement application lifecycle: launch, background operation, quit.
-- Establish the project folder structure and file naming conventions used by all subsequent specs.
+| Item | Current contract |
+|---|---|
+| Platform | macOS 14.0 or later |
+| Language/toolchain | Swift 5 language mode; development and CI use Xcode, with CI selecting Xcode 16.4 on `macos-15` runners |
+| Application target | Xcode target `voiceflow`, product `VoiceFlow.app`, bundle identifier `dha-aa.voiceflow` |
+| Test target | `voiceflowTests`, importing the application module as `voiceflow` |
+| Package dependency | `argmaxinc/argmax-oss-swift`, resolved at version 0.18.0; the app uses the `WhisperKit` product |
+| Application type | `LSUIElement = true`; no Dock icon and no launch window |
+| Bundle metadata | `CFBundleName = VoiceFlow`; version and build are supplied by `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` |
+| Privacy baseline | Audio and dictated/transcribed content remain local and must never be logged |
 
----
+The package resolution is part of the repository contract and is recorded in `voiceflow.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved`. [3]
 
-## 3. Out of Scope
+## 3. Application composition
 
-Do NOT implement any of the following in this specification:
+`VoiceFlowApp` is the SwiftUI `@main` entry point and installs `AppDelegate` through `@NSApplicationDelegateAdaptor`. It declares no SwiftUI scene because VoiceFlow is a menu-bar application. `AppDelegate.applicationDidFinishLaunching` creates one shared `AppStateManager`, then constructs and retains the menu-bar controller, model manager, transcription engine/coordinator, injection coordinator, audio recorder, recording coordinator, and overlay controller. [4] [5]
 
-- Microphone access or audio recording.
-- WhisperKit model loading or transcription.
-- `Fn` key detection or any global key monitoring.
-- The recording overlay window.
-- Text injection into other applications.
-- Settings window or model management UI.
-- Any network requests or model downloading.
-- Menu bar icon animations.
+The composition root owns dependency wiring. The important runtime relationships are:
 
----
+```text
+AppDelegate
+├── AppStateManager
+├── MenuBarController ── observes state, owns NSStatusItem + NSPopover
+├── ModelManager ─────── owns local WhisperKit catalog/model lifecycle
+├── TranscriptionEngine ── loads/caches WhisperKit sessions
+├── TranscriptionCoordinator ── audio URL → processed text
+├── InjectionCoordinator ── processed text → target application
+├── AudioRecorder
+├── RecordingCoordinator ── Fn events + recorder + readiness gate
+└── OverlayWindowController ── observes state and audio level
+```
 
-## 4. Dependencies
+The application starts the recording and overlay controllers during launch. It also refreshes the model catalog and requests background preload of the persisted selected model. A `--model-preflight --model-id <id>` launch mode prints a metadata-only preflight report and exits; it does not print audio or text content. [4] [6]
 
-**Previous specifications:** None. This is the first specification.
+On termination, the AppDelegate stops the recording and overlay controllers and releases the owned coordinators. The application does not terminate merely because a Settings window closes. [4]
 
-**External dependencies:**
-- macOS 14.0 or later.
-- Xcode 16.0 or later.
-- `argmax-oss-swift` package: `https://github.com/argmaxinc/argmax-oss-swift.git` (version `0.9.0` or later).
-- Link only the `WhisperKit` product (not TTSKit or SpeakerKit).
+## 4. Shared state model
 
-**Assumptions:**
-- Xcode and the developer toolchain are already installed.
-- The developer has a valid Apple Developer account (required for microphone entitlements in later specs).
-
----
-
-## 5. Implementation Requirements
-
-### 5.1 Xcode Project Setup
-
-- Create a new macOS App project named `VoiceFlow`.
-- Set the deployment target to macOS 14.0.
-- Configure `Info.plist`:
-  - `LSUIElement = YES` — app runs as a menu bar agent with no Dock icon and no application menu bar.
-  - `NSMicrophoneUsageDescription = "VoiceFlow needs microphone access to transcribe your voice."` — required before microphone is accessed in Spec 02.
-- Add Hardened Runtime entitlement: `com.apple.security.device.audio-input = YES`.
-- Add Swift Package dependency: `https://github.com/argmaxinc/argmax-oss-swift.git` from version `0.9.0`.
-- Link the `WhisperKit` product to the app target.
-
-### 5.2 Application State
-
-Define `AppState` as a Swift enum:
+`AppState` is the shared lifecycle enum:
 
 ```swift
 enum AppState: Equatable {
     case idle
+    case preparingModel
     case recording
     case processing
     case injecting
+    case completed
     case error(AppError)
 }
 ```
 
-Define `AppError`:
+`AppError` currently contains:
 
 ```swift
 enum AppError: Error, Equatable {
@@ -93,228 +76,142 @@ enum AppError: Error, Equatable {
     case modelFailedToLoad
     case transcriptionFailed
     case injectionFailed
+    case accessibilityPermissionDenied
 }
 ```
 
-Implement `AppStateManager` as an `@Observable` class:
+`AppStateManager` is an `@Observable` reference type with a private-set `currentState`, initially `.idle`, and a stable `transition(to:)` method. Every transition cancels any pending recovery task, updates the state, and prints a diagnostic transition line. When the new state is `.error`, the manager schedules recovery to `.idle` after two seconds unless another transition or cancellation intervenes. [7]
 
-```swift
-@Observable
-final class AppStateManager {
-    private(set) var currentState: AppState = .idle
-    private var recoveryTask: Task<Void, Never>?
+The lifecycle expected by the current implementation is:
 
-    func transition(to newState: AppState) {
-        // Cancel any pending recovery task when state changes
-        recoveryTask?.cancel()
-        
-        // Log the transition
-        // Update currentState
-        
-        // Centralized Error Recovery:
-        // If state is .error, automatically transition back to .idle after 2 seconds
-        if case .error = newState {
-            recoveryTask = Task {
-                try? await Task.sleep(for: .seconds(2))
-                guard !Task.isCancelled else { return }
-                self.transition(to: .idle)
-            }
-        }
-    }
-}
+```text
+idle
+  └─ Fn hold → preparingModel → recording
+recording
+  └─ Fn release → processing
+processing
+  └─ successful transcription → injecting
+injecting
+  └─ successful injection → completed → idle after about 400 ms
+any active stage
+  └─ failure → error(AppError) → idle after about 2 s
 ```
 
-Valid forward transitions:
-`idle → recording → processing → injecting → idle`
+A release before permission or model readiness completes is a normal cancelled startup and returns to `.idle`; it is not a transcription or microphone error. Requests received outside the stage that owns them are ignored by the relevant coordinator. The state manager is the authority for core error recovery; UI controllers must not create competing recovery timers. [7] [8] [9]
 
-Any state may transition to `.error(...)`.
-`.error(...)` must automatically transition to `.idle` after 2 seconds via the centralized recovery mechanism in `AppStateManager`. This is the sole authority for recovering the core state.
+### Architectural note
 
-Log every state transition using `os.Logger` or `print` for debugging in later specs.
+The state manager currently uses `print` for transition diagnostics while the rest of the production pipeline also has privacy-safe `OSLog` categories. This is a known production-cleanup gap, not permission to log user content. A future hardening change should replace remaining diagnostic `print` calls with structured, content-free logging without changing the public state contract.
 
-### 5.3 Menu Bar Infrastructure
+## 5. Menu-bar infrastructure
 
-- Instantiate one `NSStatusItem` at app launch. It must persist for the application lifetime.
-- Display an SF Symbol icon in the menu bar based on `AppState`:
-  - `.idle` → `"mic"` (static, no animation)
-  - `.recording` → `"mic.fill"` (static icon with red tint; animation added in Spec 05)
-  - `.processing` → `"waveform"` (static; animation added in Spec 05)
-  - `.error` → `"exclamationmark.triangle"`
-- Clicking the icon toggles the popover. Do NOT use a standard `NSMenu`.
-- The `MenuBarController` must observe `AppStateManager` and update the icon when state changes.
+`MenuBarController` creates exactly one persistent `NSStatusItem` and one transient `NSPopover`. The popover hosts `MenuBarPopoverView` through an `NSHostingController`; it is not an `NSMenu`. Clicking the status item toggles the popover. The controller observes state by polling on the main run loop at approximately 100 ms and updates the status icon. [10]
 
-### 5.4 Minimal Menu Bar Popover
+The current icon behavior is:
 
-Attach an `NSPopover` to the `NSStatusItem`. 
+| State | Current presentation |
+|---|---|
+| `.idle`, `.completed` | `MenuBarIcon` asset-catalog image, marked template, 18×18 pt; AppKit derives Light/Dark contrast because no hard-coded tint is applied |
+| `.preparingModel` | Animated waveform SF Symbol frames with automatic template tint |
+| `.recording` | Red microphone SF Symbol pulse frames |
+| `.processing`, `.injecting` | Animated waveform SF Symbol frames with automatic template tint |
+| `.error` | Orange `exclamationmark.triangle` semantic icon |
 
-- Create `MenuBarPopoverView` as a SwiftUI view.
-- In this specification, it only needs minimal placeholder content:
-  - App name ("VoiceFlow").
-  - Status text driven by `AppStateManager.currentState` (e.g., "Ready", "Listening", "Processing", "Injecting", "Error").
-  - A "Quit VoiceFlow" button that calls `NSApplication.shared.terminate(nil)`.
-- Configure the `NSPopover` to display this view.
-- Set `NSPopover.behavior = .transient`.
-- The `MenuBarController` must handle toggling the popover when the menu bar icon is clicked.
+The normal idle icon is the VoiceFlow identity mark stored in `Assets.xcassets/MenuBarIcon.imageset`, not the old microphone glyph. Its catalog rendering intent is `template`, and its light/dark appearance is therefore controlled by native menu-bar rendering. The menu-bar behavior and actions are independent of Settings and must remain stable when the icon asset changes. [10] [11]
 
-The full settings and model management UI will be added to this popover in Spec 06. The container architecture must be established now and remain stable.
+`MenuBarPopoverView` displays the app name, a live status label, the selected model display name or `No active model`, a `Settings...` button, and `Quit VoiceFlow`. The status labels are `Ready`, `Done`, `Loading model`, `Listening`, `Processing`, `Injecting`, and `Error`. [12]
 
-### 5.5 Application Entry Point
+## 6. Resources and entitlements
 
-- Use `@main` with a SwiftUI `App` struct or an `AppDelegate` — whichever integrates more cleanly with `NSStatusItem` lifecycle.
-- The app must not present any windows on launch.
-- The app must not appear in the Dock.
-- `AppStateManager` must be instantiated once at launch and passed to all components that need it (via dependency injection or SwiftUI environment).
+The tracked `voiceflow/Resources/Info.plist` must contain:
 
-### 5.6 Project Folder Structure
+| Key | Current value |
+|---|---|
+| `CFBundleIdentifier` | `$(PRODUCT_BUNDLE_IDENTIFIER)` |
+| `CFBundleName` | `VoiceFlow` |
+| `CFBundleShortVersionString` | `$(MARKETING_VERSION)` |
+| `CFBundleVersion` | `$(CURRENT_PROJECT_VERSION)` |
+| `LSUIElement` | `true` |
+| `NSHumanReadableCopyright` | `Copyright © 2026 VoiceFlow` |
+| `NSMicrophoneUsageDescription` | `VoiceFlow needs microphone access to transcribe your voice.` |
 
-All subsequent specs must place files in the correct location. Establish this structure now (create empty placeholder directories as needed):
+The tracked entitlements file disables App Sandbox and enables microphone input:
 
-```
-VoiceFlow/
-├── App/
-│   ├── VoiceFlowApp.swift          ← @main entry point
-│   └── AppDelegate.swift           ← (if using AppDelegate pattern)
-├── Core/
-│   ├── State/
-│   │   ├── AppState.swift          ← AppState + AppError enums
-│   │   └── AppStateManager.swift   ← Observable state manager
-│   ├── Audio/                      ← reserved for Spec 02
-│   ├── Transcription/              ← reserved for Spec 03
-│   └── Injection/                  ← reserved for Spec 04
-├── UI/
-│   ├── MenuBar/
-│   │   └── MenuBarController.swift ← NSStatusItem + icon management
-│   ├── Popover/
-│   │   └── MenuBarPopoverView.swift ← SwiftUI popover content
-│   ├── Overlay/                    ← reserved for Spec 05
-│   └── Settings/                   ← reserved for Spec 06
-└── Resources/
-    └── Info.plist
+```xml
+<key>com.apple.security.app-sandbox</key>
+<false/>
+<key>com.apple.security.device.audio-input</key>
+<true/>
 ```
 
----
+App Sandbox is disabled because the current global Fn monitoring, Accessibility interaction, and cross-process keyboard event behavior require a non-sandboxed application. [13] [14]
 
-## 6. Files and Components
+## 7. Testing requirements
 
-### Files to create
+Foundation tests must verify the initial state and direct state transitions, including `.idle`, `.recording`, `.processing`, `.injecting`, and `.error`. The current suite is `voiceflowTests/State/AppStateManagerTests.swift`.
 
-| File | Purpose |
-|------|---------|
-| `App/VoiceFlowApp.swift` | `@main` entry point |
-| `App/AppDelegate.swift` | AppDelegate (if used) |
-| `Core/State/AppState.swift` | `AppState` and `AppError` enums |
-| `Core/State/AppStateManager.swift` | Observable state manager |
-| `UI/MenuBar/MenuBarController.swift` | `NSStatusItem`, icon updates, popover attachment |
-| `UI/Popover/MenuBarPopoverView.swift` | SwiftUI popover content (placeholder) |
+Build verification must run:
 
-### Files that must NOT be modified after this spec is complete
-
-- `Core/State/AppState.swift` — This is the contract for all subsequent specs. Shape changes break downstream.
-- `Core/State/AppStateManager.swift` — The `transition(to:)` interface must remain stable after Spec 01.
-
-### Do not touch
-
-- `Core/Audio/` — Reserved for Spec 02.
-- `Core/Transcription/` — Reserved for Spec 03.
-- `Core/Injection/` — Reserved for Spec 04.
-- `UI/Overlay/` — Reserved for Spec 05.
-- `UI/Settings/` — Reserved for Spec 06.
-
----
-
-## 7. Tests
-
-Write and run these tests before marking this spec complete. Place them in `VoiceFlowTests/State/AppStateManagerTests.swift`.
-
-### Unit Tests
-
-```
-test_initialState_isIdle
-  Create AppStateManager. Assert currentState == .idle.
-
-test_transition_idleToRecording
-  transition(to: .recording). Assert currentState == .recording.
-
-test_transition_recordingToProcessing
-  From .recording, transition(to: .processing). Assert currentState == .processing.
-
-test_transition_processingToInjecting
-  From .processing, transition(to: .injecting). Assert currentState == .injecting.
-
-test_transition_injectingToIdle
-  From .injecting, transition(to: .idle). Assert currentState == .idle.
-
-test_transition_anyStateToError
-  From .recording, transition(to: .error(.transcriptionFailed)).
-  Assert currentState == .error(.transcriptionFailed).
-
-test_transition_errorToIdle
-  From .error(.transcriptionFailed), transition(to: .idle).
-  Assert currentState == .idle.
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+xcodebuild -project voiceflow.xcodeproj \
+  -scheme voiceflow \
+  -configuration Debug \
+  -destination 'platform=macOS' \
+  ONLY_ACTIVE_ARCH=YES \
+  -only-testing:voiceflowTests \
+  test CODE_SIGNING_ALLOWED=NO
 ```
 
-### Build Verification
+Manual foundation verification must confirm that the application launches without a Dock icon, displays the VoiceFlow menu-bar identity icon, opens the transient popover, displays the live status/model content, and quits from the popover. Full model, recording, injection, overlay, Settings, and release verification belongs to the later specifications.
 
-```
-- `import WhisperKit` must compile without errors.
-  Add it to at least one source file and confirm no "module not found" errors.
-- Zero build errors on a clean build.
-```
+## 8. Acceptance criteria
 
-### Manual Verification
+- The app target builds as `VoiceFlow.app` with bundle identifier `dha-aa.voiceflow`.
+- `WhisperKit` imports successfully from the resolved Swift package.
+- The app launches as an `LSUIElement` without a Dock icon or launch window.
+- One menu-bar status item and one transient popover are created and retained for the app lifetime.
+- The popover uses SwiftUI content and provides Settings and Quit actions.
+- `AppStateManager` starts at `.idle` and exposes the stable `transition(to:)` contract.
+- The state enum includes `.preparingModel` and `.completed`; error recovery returns to `.idle` after approximately two seconds.
+- The menu-bar icon maps to the current state, with the idle/completed VoiceFlow asset rendered as a native template image.
+- Privacy-safe logging never includes audio, spoken text, or transcription text.
+- All foundation tests pass.
 
-```
-- Launch the app.
-- Confirm no Dock icon appears.
-- Confirm the VoiceFlow icon appears in the menu bar.
-- Click the icon. Confirm the popover opens.
-- Confirm the popover placeholder content renders correctly (status and Quit button).
-- Click "Quit VoiceFlow". Confirm the app terminates.
-```
+## 9. Handoff to Specification 02
 
----
+Specification 02 may rely on:
 
-## 8. Acceptance Criteria
+| Component | Handoff contract |
+|---|---|
+| `AppState` | Current enum including `.preparingModel` and `.completed` |
+| `AppStateManager` | `currentState` and `transition(to:)`; centralized error recovery |
+| `AppDelegate` | Stable composition root for adding the audio stage |
+| `MenuBarController` | Persistent status item and popover; state-driven icon updates |
+| Resources | Microphone usage description and audio-input entitlement already present |
+| Logging | `VoiceFlowLog.audio`, `.model`, `.transcription`, and `.pipeline` categories are available |
 
-All of the following must be true before this spec is complete:
+## References
 
-- [ ] Project builds with zero errors.
-- [ ] `import WhisperKit` compiles — confirms the dependency is linked correctly.
-- [ ] App launches without a Dock icon.
-- [ ] Menu bar icon appears on launch.
-- [ ] Clicking the icon shows the popover.
-- [ ] Popover shows status label and Quit button.
-- [ ] Clicking Quit terminates the app cleanly.
-- [ ] All 7 `AppStateManager` unit tests pass.
-- [ ] Folder structure matches §5.6.
-- [ ] `Info.plist` has `LSUIElement = YES`, `NSMicrophoneUsageDescription`, and the microphone entitlement.
+[1]: ../README.md "VoiceFlow project overview"
+[2]: ../voiceflow/App/AppDelegate.swift "VoiceFlow application composition"
+[3]: ../voiceflow.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved "Resolved Swift package dependencies"
+[4]: ../voiceflow/App/AppDelegate.swift "AppDelegate lifecycle and dependency wiring"
+[5]: ../voiceflow/App/VoiceFlowApp.swift "SwiftUI application entry point"
+[6]: ../voiceflow/Core/Transcription/ModelManager.swift "Model preflight command and model lifecycle"
+[7]: ../voiceflow/Core/State/AppState.swift "Shared state and error enums"
+[8]: ../voiceflow/Core/Audio/RecordingCoordinator.swift "Recording readiness and state sequencing"
+[9]: ../voiceflow/Core/Injection/InjectionCoordinator.swift "Completion and injection state sequencing"
+[10]: ../voiceflow/UI/MenuBar/MenuBarController.swift "Status item, popover, and icon behavior"
+[11]: ../voiceflow/Assets.xcassets/MenuBarIcon.imageset/Contents.json "Template menu-bar asset configuration"
+[12]: ../voiceflow/UI/Popover/MenuBarPopoverView.swift "Current popover content and labels"
+[13]: ../voiceflow/Resources/Info.plist "Bundle metadata and microphone usage description"
+[14]: ../voiceflow/Resources/voiceflow.entitlements "Current application entitlements"
 
----
+## Completion gate
 
-## 9. Completion Gate
+Do not begin Specification 02 until the application shell builds, foundation tests pass, the status item/popover are manually verified, and the shared state contract is understood. This gate verifies the foundation; it does not imply that later pipeline stages are complete.
 
-**This spec is NOT complete until:**
+## Implementation inconsistency register
 
-1. All acceptance criteria are checked off.
-2. All unit tests pass with zero failures.
-3. The project builds cleanly.
-4. `AppState` and `AppStateManager` interfaces are frozen and ready to be consumed by Spec 02.
-5. No known errors or test failures remain.
-
-**Do not proceed to Spec 02 until this gate passes.**
-
----
-
-## 10. Handoff to Spec 02
-
-Spec 02 receives these stable, verified components:
-
-| Component | What Spec 02 can rely on |
-|-----------|--------------------------|
-| `AppState` | Enum with `.idle`, `.recording`, `.processing`, `.injecting`, `.error` — stable interface |
-| `AppStateManager` | `currentState` property + `transition(to:)` method |
-| `MenuBarController` | Icon updates when `AppStateManager` state changes |
-| Project structure | `Core/Audio/` directory ready for Spec 02 audio files |
-| Build | App builds and runs; WhisperKit is linked and importable |
-
-Spec 02 will add microphone capture into `Core/Audio/`, and call `transition(to: .recording)` when capture starts and `transition(to: .processing)` when it stops.
+The historical specification froze the state enum before `.preparingModel` and `.completed` existed and required a placeholder microphone icon. Those requirements are intentionally superseded by this document. The current implementation also retains a small amount of `print`-based diagnostics; this is recorded as a cleanup item for Specification 07 rather than silently treated as the final logging design.

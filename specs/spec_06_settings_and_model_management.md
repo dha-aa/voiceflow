@@ -1,395 +1,176 @@
-# SPEC 06 — Settings Window & Model Management UI
+# SPEC 06 — Settings Window and WhisperKit Model Management UI
 
-## 1. Purpose
+## Status and dependency
 
-This specification implements the Settings window and the model management UI — the administrative surface of VoiceFlow where users configure the application, manage WhisperKit models, and view application information.
+Specification 06 adds the administrative UI on top of the complete core pipeline and overlay from Specifications 01–05. It is a consumer of the existing `ModelManager`, `AppStateManager`, overlay preference contract, and menu-bar popover. It must not recreate the status item, replace the `NSPopover`, or change recording/transcription/injection behavior.
 
-By this point, the full core pipeline and recording overlay are working. This spec adds the settings layer that allows users to control the behavior they have already verified works correctly.
+The current Settings window has three destinations: **General**, **Models**, and **About**. The implementation uses explicit sidebar buttons because relying on implicit `NavigationSplitView` list selection caused the original sections to be non-clickable.
 
----
+## 1. Goals
 
-## 2. Scope
+The Settings layer must let users:
 
-- Implement the Settings window as a native macOS sidebar-style window.
-- Implement the **General** settings pane: push-to-talk status, launch at login toggle, overlay toggle.
-- Implement the **Models** settings pane: installed model list, active model selection, model download, model deletion.
-- Implement the **About** pane: app version, model engine info, links.
-- Populate the existing `MenuBarPopoverView` to show the currently selected model name and provide access to Settings.
-- Do NOT recreate or redesign the menu bar infrastructure. Spec 01 already establishes the `NSPopover`-based menu bar architecture. Spec 06 must consume this existing architecture and only modify the popover content view.
+- Understand the always-enabled Fn push-to-talk behavior.
+- Enable or disable launch at login through `SMAppService.mainApp`.
+- Enable/disable the recording overlay and configure success feedback.
+- Refresh the live WhisperKit model catalog.
+- Download models with persistent progress and cancellation.
+- See models only as installed after structural and real load validation succeeds.
+- Select one valid installed model as active.
+- Delete inactive models with confirmation and prevent active-model deletion.
+- Open the app-owned model directory in Finder.
+- View app version/build, WhisperKit attribution, repository links, and license information.
 
----
+## 2. Components and contracts
 
-## 3. Out of Scope
+| Component | Location | Current responsibility |
+|---|---|---|
+| `SettingsWindowController` | `voiceflow/UI/Settings/SettingsWindowController.swift` | Singleton Settings window lifecycle and fixed geometry |
+| `SettingsView` | `voiceflow/UI/Settings/SettingsView.swift` | Three-destination sidebar and detail routing |
+| `GeneralSettingsView` | `voiceflow/UI/Settings/GeneralSettingsView.swift` | General preferences and launch-at-login |
+| `ModelsSettingsView` | `voiceflow/UI/Settings/ModelsSettingsView.swift` | Model catalog, actions, progress, alerts, and Finder access |
+| `ModelDownloadCoordinator` | `voiceflow/UI/Settings/ModelDownloadCoordinator.swift` | Long-lived download task, progress, cancel, and error state |
+| `AboutSettingsView` | `voiceflow/UI/Settings/AboutSettingsView.swift` | Branding, metadata, links, and license |
+| `MenuBarPopoverView` | `voiceflow/UI/Popover/MenuBarPopoverView.swift` | Settings entry point and active model/status summary |
 
-Do NOT implement any of the following in this specification:
+The AppDelegate passes the shared `ModelManager` to `SettingsWindowController.shared.show(modelManager:)`. The window controller retains the same manager and a long-lived `ModelDownloadCoordinator`. Reopening Settings rebuilds the SwiftUI root view but preserves the manager and any active download.
 
-- Changes to the core pipeline (Specs 01–04).
-- Changes to the recording overlay (Spec 05).
-- New Fn key detection logic.
-- New transcription or injection logic.
-- Final production polish, app signing, or distribution (Spec 07).
+## 3. Settings window
 
----
+`SettingsWindowController` is a main-actor singleton. The first window uses an intended content size of **760×500 pt** and a minimum content size of **680×420 pt**. It is a standard titled, closable, miniaturizable, resizable `NSWindow`, not an overlay panel. Closing it does not terminate the menu-bar app.
 
-## 4. Dependencies
+Each `show(modelManager:)` call updates the retained manager, reuses the download coordinator when the manager is unchanged, recreates the SwiftUI root view, resets the window geometry to the intended size, brings it frontmost, and activates the application. This prevents the window from shrinking after switching tabs or reopening it.
 
-**Specs 01–05 must be complete and verified before starting this spec.**
+`SettingsView.Destination` is the `Hashable` enum `general`, `models`, and `about`. The sidebar uses explicit `Button` controls with a visual selection background. The detail pane renders exactly one of `GeneralSettingsView`, `ModelsSettingsView`, or `AboutSettingsView`.
 
-Required from Spec 01:
-- `MenuBarController` and `MenuBarPopoverView` — the established popover architecture. Spec 06 must NOT replace `NSPopover`, introduce `NSMenu`, rewrite `MenuBarController`, recreate the status item, or rebuild the popover infrastructure.
+## 4. General settings
 
-Required from Spec 03:
-- `ModelManager` — stable API for model discovery, selection, download, deletion.
-  - `availableModels: [WhisperModel]`
-  - `selectedModelId: String?`
-  - `selectModel(id:)`
-  - `downloadModel(id:) async throws`
-  - `deleteModel(id:) throws`
-  - `refreshModels() async`
+`GeneralSettingsView` uses `@AppStorage` and the following keys/defaults:
 
-No new framework dependencies required. SwiftUI + AppKit.
+| Key | Default | Behavior |
+|---|---:|---|
+| `showRecordingOverlay` | `true` | Controls whether the transient overlay is shown |
+| `playCompletionSound` | `false` | Controls success-only completion audio |
+| `completionSoundEffect` | `Tink` | Selected `CompletionSoundEffect` raw value |
 
----
+The pane contains these sections:
 
-## 5. Implementation Requirements
+- **Push-to-Talk:** displays `Hold Fn to Talk`, `Enabled`, and `Hold Fn to record. Release Fn to transcribe.` The feature is currently always enabled and has no toggle.
+- **Startup:** controls `Launch VoiceFlow at Login` through `SMAppService.mainApp.register()` and `.unregister()`. It displays enabled, approval-required, not-registered, or unavailable status and shows registration errors inline.
+- **Feedback:** controls `Play completion sound` and a disabled-until-enabled picker containing `Tink`, `Pop`, and `Glass`. The actual playback remains owned by `InjectionCoordinator` and occurs only after successful injection.
+- **Appearance:** controls `Show recording overlay when recording` and explains that the overlay does not take focus.
 
-### 5.1 Settings Window
+Changing the overlay setting takes effect through `UserDefaults.didChangeNotification` without relaunching. Completion sound preferences are read by the injection coordinator and persist across launches.
 
-Implement `SettingsWindowController` in `UI/Settings/SettingsWindowController.swift`.
+## 5. Models pane
 
-The Settings window:
-- Is a standard `NSWindow` (not a panel) with a title bar.
-- Uses the macOS Settings-style sidebar layout.
-- Closes when the user clicks the red close button.
-- Does not terminate the application when closed.
-- Can be re-opened from the menu bar popover "Settings" button.
-- Does not take over the main menu bar (the app has no menu bar in `LSUIElement` mode).
+`ModelsSettingsView` binds to the shared `ModelManager` and the long-lived `ModelDownloadCoordinator`. It contains a refresh control, `Installed Models` and `Available to Download` sections, and a `Model location` area showing the canonical path with an **Open in Finder** button.
 
-Use SwiftUI `NavigationSplitView` (macOS 13+) or a `HSplitView` to implement the sidebar layout:
+The pane does not hardcode model names, sizes, or installation state. It renders the current `availableModels` supplied by `ModelManager`, partitioned by `isDownloaded`. The manager’s valid installation contract is described in Specification 03.
 
-```
-┌────────────────────────────────────────────┐
-│ VoiceFlow Settings                         │
-├──────────────┬─────────────────────────────┤
-│ General      │                             │
-│ Models       │    [Selected pane content]  │
-│ About        │                             │
-└──────────────┴─────────────────────────────┘
-```
+Each row displays the derived model name, a recommended marker when applicable, a size or `Size unknown`, Downloaded status for installed models, and an active indicator. Actions are:
 
-Implement the window controller:
+| Row state | Available actions |
+|---|---|
+| Installed and active | `Active`; Delete requests the active-model guard and never deletes immediately |
+| Installed and inactive | `Set Active`, `Delete` with confirmation |
+| Not installed | `Download`; disabled when another download is active |
+| Active download | Linear progress, percentage, and `Cancel`/`Cancelling…` |
 
-```swift
-final class SettingsWindowController: NSWindowController {
-    static let shared = SettingsWindowController()
+`Set Active` calls `ModelManager.selectModel(id:)`. Only a preflight-valid installed model can become selected, and selection changes trigger transcription-engine replacement/preload.
 
-    func show() { ... }    // Bring window to front or create if needed
-}
-```
+`Download` calls `ModelDownloadCoordinator.startDownload(id:)`. The coordinator keeps `activeModelID`, `progress`, `errorMessage`, and `isCancelling` outside the SwiftUI view lifecycle, so switching to General or About does not stop or erase progress. The download task invokes `ModelManager.downloadModel`, clamps progress, refreshes the model list after completion, and clears transient state. Cancellation cancels the task and does not report a false successful installation.
 
-Use a singleton so calling `show()` brings the existing window to front rather than creating a second window.
+After a model download, `ModelManager` validates the exact SDK-returned folder, checks required Core ML components, confirms the path is inside the app-owned root, optionally loads it through WhisperKit, and only then marks it installed. Validation or load failure is shown as an actionable alert and the failed artifact is removed when safe.
 
-### 5.2 General Settings Pane
+The pane shows a destructive confirmation before deleting an inactive model. The active model cannot be deleted. After successful deletion, it refreshes the catalog and local installation state. The Finder button opens `modelManager.downloadBase`, which is the app-owned model root, not a legacy snapshot directory.
 
-Implement `GeneralSettingsView` in `UI/Settings/GeneralSettingsView.swift`.
+## 6. About pane
 
-Content:
+`AboutSettingsView` shows:
 
-**Push-to-Talk**
-- Static label: "Hold Fn to Talk"
-- Status indicator: "Enabled" (always enabled in this version — no toggle needed).
-- Descriptive text: "Hold Fn to record. Release Fn to transcribe."
+- VoiceFlow branding and `Fast, private voice input for macOS.`
+- Version from `CFBundleShortVersionString`.
+- Build from `CFBundleVersion`.
+- `WhisperKit by Argmax`.
+- Links to `https://github.com/dha-aa/voiceflow` and `https://github.com/argmaxinc/argmax-oss-swift`.
+- `MIT License`.
 
-**Launch at Login**
-- Toggle: `Launch VoiceFlow at Login`
-- Implement using `SMAppService.mainApp` (macOS 13+):
-  ```swift
-  try SMAppService.mainApp.register()   // enable
-  try SMAppService.mainApp.unregister() // disable
-  SMAppService.mainApp.status           // current status
-  ```
+The pane is informational and does not perform model or pipeline actions.
 
-**Show Recording Overlay**
-- Toggle: `Show recording overlay when recording`
-- Persist with `UserDefaults` (key: `"showRecordingOverlay"`, default: `true`).
-- > `OverlayWindowController` is a completed component from Spec 05. Do not modify it. Spec 06 controls overlay visibility strictly through the established `UserDefaults` contract.
-
-### 5.3 Models Settings Pane
-
-Implement `ModelsSettingsView` in `UI/Settings/ModelsSettingsView.swift`.
-
-This pane uses `ModelManager` from Spec 03 directly.
-
-Layout:
-
-```
-Models
-
-Installed Models
-
-  [model row]   Whisper Large V3
-                626 MB · Downloaded · ● Active
-                [Delete] button
-
-  [model row]   Whisper Small
-                244 MB · Downloaded
-                [Set Active] [Delete] buttons
-
-Available to Download
-
-  [model row]   Whisper Base
-                145 MB
-                [Download] button
-
-  [model row]   Whisper Tiny
-                39 MB
-                [Download] button
-```
-
-Each row must show:
-- Model display name.
-- Size description.
-- Download status.
-- Active/inactive indicator.
-- Appropriate action buttons: **Set Active**, **Download**, **Delete**.
-
-Action requirements:
-- **Set Active**: Call `ModelManager.selectModel(id:)`. Only one model may be active at a time. Updates immediately.
-- **Download**: Call `ModelManager.downloadModel(id:)`. Show a `ProgressView` during download. Disable the button during download. Show error if download fails.
-- **Delete**: Call `ModelManager.deleteModel(id:)`. Show a confirmation alert before deleting. Deleting the active model must prompt the user to select another model.
-
-Model list:
-
-**Do NOT hardcode the model list.** WhisperKit provides a remote catalog API that fetches the live list directly from the HuggingFace repository `argmaxinc/whisperkit-coreml`.
-
-Use this API in `ModelManager.refreshModels()`:
-
-```swift
-// Fetch all available models from the remote HuggingFace repo
-let remoteModelIds: [String] = try await WhisperKit.fetchAvailableModels(
-    from: "argmaxinc/whisperkit-coreml",
-    matching: ["*"]          // glob — "*" returns all models
-)
-
-// Get device-appropriate recommendations
-let recommended: ModelSupport = await WhisperKit.recommendedRemoteModels(
-    from: "argmaxinc/whisperkit-coreml"
-)
-// recommended.default  → the default model for this device
-// recommended.supported → all models supported on this device
-```
-
-The full catalog lives at: https://huggingface.co/argmaxinc/whisperkit-coreml/tree/main
-
-**Mapping remote IDs to display names:**
-
-The remote IDs returned by `fetchAvailableModels` follow the pattern `openai_whisper-<variant>` (e.g., `openai_whisper-large-v3-v20240930_626MB`). Strip the `openai_whisper-` prefix to get the variant name used by `WhisperKit.download(variant:)`.
-
-Build the display name from the variant string with a simple formatter (e.g., replace underscores and hyphens with spaces, capitalize words). Do not maintain a static lookup table.
-
-**Model size:**
-
-The remote API does not return file sizes directly. Two options:
-1. After fetching the remote list, compute size from disk for downloaded models using `FileManager` (check the model cache directory).
-2. For not-yet-downloaded models, omit the size or show "Size unknown" — do not hardcode it.
-
-Do not hardcode sizes. If they matter for UX, compute them at runtime or omit them.
-
-**Downloading a model:**
-
-```swift
-// Download a specific model variant (returns the local URL)
-let localURL = try await WhisperKit.download(
-    variant: variantId,             // e.g. "large-v3-v20240930_626MB"
-    from: "argmaxinc/whisperkit-coreml",
-    progressCallback: { progress in
-        // Update download progress (0.0 to 1.0)
-    }
-)
-```
-
-Mark models as downloaded by checking whether their directory exists in the WhisperKit model cache directory on disk.
-
-### 5.4 About Pane
-
-Implement `AboutSettingsView` in `UI/Settings/AboutSettingsView.swift`.
-
-Content:
-- App name: **VoiceFlow**
-- Tagline: "Fast, private voice input for macOS."
-- Version: pulled from `Bundle.main.infoDictionary["CFBundleShortVersionString"]`.
-- Build: pulled from `Bundle.main.infoDictionary["CFBundleVersion"]`.
-- Model engine: "WhisperKit by Argmax"
-- Link: VoiceFlow GitHub repository (use the actual project URL).
-- License information (brief — "MIT License" or appropriate).
-
-Keep this pane simple. No excessive UI.
-
-### 5.5 Update Menu Bar Popover Content
-
-Update `MenuBarPopoverView` in `UI/Popover/MenuBarPopoverView.swift`:
-
-- This view and the underlying `NSPopover` architecture were already established in Spec 01. Do not recreate or change the `MenuBarController`'s popover presentation logic.
-- Update the existing placeholder content to include the real functionality:
-  - Keep the app name and status label (driven by `AppStateManager`).
-  - Show the currently active model name from `ModelManager.selectedModelId`.
-  - Add a functional "Settings" button: calls `SettingsWindowController.shared.show()`.
-  - Keep the existing "Quit" button.
-
----
-
-## 6. Files and Components
-
-### Files to create
-
-| File | Purpose |
-|------|---------|
-| `UI/Settings/SettingsWindowController.swift` | `NSWindow` lifecycle for Settings |
-| `UI/Settings/SettingsView.swift` | Root SwiftUI view with `NavigationSplitView` sidebar |
-| `UI/Settings/GeneralSettingsView.swift` | General pane |
-| `UI/Settings/ModelsSettingsView.swift` | Models pane |
-| `UI/Settings/AboutSettingsView.swift` | About pane |
-| `UI/Settings/SettingsView.swift` | Root SwiftUI view with `NavigationSplitView` sidebar |
-
-### Files that may be modified
-
-| File | Permitted change |
-|------|----------------|
-| `UI/Popover/MenuBarPopoverView.swift` | Update placeholder content with Settings button and model status |
-| `App/VoiceFlowApp.swift` | Pass `ModelManager` into Settings views |
-| `App/AppDelegate.swift` | Same |
-
-### Files that must NOT be modified
-
-| File | Reason |
-|------|--------|
-| `Core/State/AppState.swift` | Stable from Spec 01 |
-| `Core/State/AppStateManager.swift` | Stable from Spec 01 |
-| `Core/Audio/` | Stable from Spec 02 |
-| `Core/Transcription/` | Stable from Spec 03 — except `ModelManager` is consumed (not changed) |
-| `Core/Injection/` | Stable from Spec 04 |
-| `UI/Overlay/RecordingOverlayView.swift` | Stable from Spec 05 |
-| `UI/Overlay/WaveformView.swift` | Stable from Spec 05 |
-
----
-
-## 7. Tests
-
-### Unit Tests: `GeneralSettingsTests.swift`
-
-```
-test_launchAtLogin_toggle_registersApp
-  Toggle launch at login ON. Assert SMAppService.mainApp.status is enabled.
-
-test_launchAtLogin_toggle_unregistersApp
-  Toggle ON, then OFF. Assert SMAppService.mainApp.status is not registered.
-
-test_showRecordingOverlay_defaultIsTrue
-  Read UserDefaults "showRecordingOverlay". Assert default value is true.
-
-test_showRecordingOverlay_persistsAfterToggle
-  Toggle to false. Read UserDefaults again. Assert false.
-```
-
-### Unit Tests: `ModelsSettingsViewTests.swift`
-
-```
-test_modelsView_showsInstalledModels
-  Mock ModelManager with 2 downloaded models.
-  Assert both models appear in the installed section.
-
-test_modelsView_showsActiveModelIndicator
-  Mock ModelManager with active model "tiny.en".
-  Assert "tiny.en" row shows active indicator.
-
-test_modelsView_downloadButton_triggersDownload
-  Tap Download on "base" model.
-  Assert ModelManager.downloadModel(id: "base") is called.
-
-test_modelsView_deleteButton_triggersConfirmation
-  Tap Delete on "tiny.en".
-  Assert a confirmation alert appears before deletion.
-```
-
-### Manual Verification
-
-```
-test_settingsWindow_opensFromPopover
-  Click menu bar icon. Click "Settings". Confirm Settings window opens.
-  Confirm window has sidebar with General, Models, About sections.
-
-test_settingsWindow_generalPane
-  Open Settings → General.
-  Confirm push-to-talk section shows "Hold Fn to Talk" and "Enabled".
-  Toggle "Launch at Login". Confirm no crash. Toggle back.
-  Toggle "Show recording overlay". Hold Fn. Confirm overlay does/does not appear.
-
-test_settingsWindow_modelsPane
-  Open Settings → Models.
-  Confirm downloaded models appear in "Installed Models".
-  Confirm undownloaded models appear in "Available to Download" with Download buttons.
-  Click "Set Active" on a different model. Confirm the active indicator moves.
-
-test_settingsWindow_aboutPane
-  Open Settings → About.
-  Confirm app name, version, and model engine are shown.
-
-test_popover_rendersUpdatedContent
-  Close and reopen Settings. Set active model to "tiny.en".
-  Click the menu bar icon. Confirm the existing popover opens.
-  Confirm the popover content renders the real settings and model status without rebuilding the popover infrastructure.
-
-test_fullPipeline_withNewModel
-  Select a different model in Settings. Close Settings.
-  Hold Fn. Speak. Release Fn. Confirm transcription uses the new model.
-  (Check console logs or model load messages for confirmation.)
-```
-
----
-
-## 8. Acceptance Criteria
-
-All of the following must be true before this spec is complete:
-
-- [ ] Settings window opens from the "Settings" button in the popover.
-- [ ] Settings window has General, Models, and About panes.
-- [ ] Launch at Login toggle correctly registers/unregisters the app.
-- [ ] "Show recording overlay" toggle hides/shows the overlay during recording.
-- [ ] Models pane shows installed and available models correctly.
-- [ ] User can select a different model and it becomes active for subsequent transcriptions.
-- [ ] User can download a new model with visible progress.
-- [ ] User can delete a model with a confirmation prompt.
-- [ ] About pane shows correct version and build information.
-- [ ] Menu bar popover shows the currently active model name (not a placeholder).
-- [ ] All unit tests pass.
-- [ ] Core pipeline still works after settings changes (regression).
-
----
-
-## 9. Completion Gate
-
-**This spec is NOT complete until:**
-
-1. All acceptance criteria are checked off.
-2. All unit tests pass.
-3. Manual verification is complete.
-4. Core pipeline regression test passes.
-5. Model selection change is picked up by the transcription engine.
-
-**Do not proceed to Spec 07 until this gate passes.**
-
----
-
-## 10. Handoff to Spec 07
-
-Spec 07 receives a complete, fully functional VoiceFlow application:
-
-| Component | Status |
-|-----------|--------|
-| Core pipeline | Verified end-to-end in Spec 04 |
-| Recording overlay | Working in Spec 05 |
-| Settings window | Working in Spec 06 |
-| Model management | Working in Spec 06 |
-| State machine | Stable since Spec 01 |
-
-Spec 07 focuses exclusively on production readiness: code quality, edge cases, error handling, performance, accessibility, code signing, and app store/distribution preparation. It does not add new features.
+## 7. Menu-bar popover integration
+
+`MenuBarPopoverView` remains hosted by the existing transient `NSPopover`. It shows `VoiceFlow`, the state-derived status, the selected model display name or `No active model`, `Settings...`, and `Quit VoiceFlow`. The Settings button calls `SettingsWindowController.shared.show(modelManager:)`; it does not create a second window or replace the popover architecture.
+
+## 8. Tests and verification
+
+The current Settings tests are in `voiceflowTests/UI/SettingsTests.swift` and cover:
+
+- All three destinations and constructible root view.
+- Overlay default and persistence.
+- Completion sound default, persistence, and effect selection.
+- Installed/available model rendering and active selection persistence.
+- Download progress, completion, exact-folder validation, and failed WhisperKit load behavior.
+- Download progress surviving outside the Models view.
+- Blocking deletion of the active model.
+
+Manual verification must confirm:
+
+1. Settings opens from the popover and closes without terminating VoiceFlow.
+2. General, Models, and About sidebar controls are all clickable.
+3. Reopening Settings restores the intended window size rather than shrinking based on the selected pane.
+4. Launch-at-login can be toggled and errors are shown without a crash.
+5. Completion sound defaults off, the picker is disabled while off, and Tink/Pop/Glass persist when selected.
+6. Overlay visibility changes apply during the next interaction.
+7. Models refreshes from the live catalog and separates validated installed models from downloadable models.
+8. Download shows progress and Cancel; switching tabs preserves progress; returning to Models shows the active operation.
+9. A successful download is validated, load-checked, detected immediately, and reused by transcription.
+10. A failed structural or WhisperKit load validation is not shown as installed.
+11. Finder opens the canonical app-owned model folder.
+12. Active-model deletion is blocked; inactive deletion requires confirmation.
+13. Selecting a different installed model triggers replacement/preload before the next recording.
+14. About shows correct metadata and links.
+15. The core TextEdit pipeline and overlay remain regression-free.
+
+## 9. Acceptance criteria
+
+- The singleton Settings window opens from the existing popover and does not terminate the app when closed.
+- General, Models, and About are selectable by explicit working controls.
+- The window reopens at its intended 760×500 content size with the 680×420 minimum.
+- Launch-at-login uses `SMAppService.mainApp` and displays actionable errors.
+- Overlay preference defaults true and persists; completion sound defaults false and persists with Tink/Pop/Glass selection.
+- Models are supplied by the live catalog and are not hardcoded in the UI.
+- Only preflight-valid, optionally real-load-validated models appear installed.
+- Download progress and cancellation survive navigation away from the Models pane.
+- Successful download refreshes the list immediately and failed download/load does not mark the model installed.
+- The canonical model folder can be opened in Finder.
+- Active model deletion is prevented; inactive deletion is confirmed and verified.
+- Selection changes are persisted and cause transcription-engine model replacement/preload.
+- About metadata and repository links are accurate.
+- All Settings tests pass and the complete core pipeline remains functional.
+
+## 10. Handoff to Specification 07
+
+Specification 07 receives a complete feature implementation with known persistence, model lifecycle, overlay, permission, and pipeline contracts. It must focus on production hardening, privacy-safe diagnostics, CI, unsigned/signed release packaging, and distribution verification; it must not invent a second Settings or model lifecycle.
+
+## References
+
+[1]: ../voiceflow/UI/Settings/SettingsWindowController.swift "Settings window lifecycle"
+[2]: ../voiceflow/UI/Settings/SettingsView.swift "Settings navigation"
+[3]: ../voiceflow/UI/Settings/GeneralSettingsView.swift "General settings and defaults"
+[4]: ../voiceflow/UI/Settings/ModelsSettingsView.swift "Models settings UI"
+[5]: ../voiceflow/UI/Settings/ModelDownloadCoordinator.swift "Persistent model download state"
+[6]: ../voiceflow/UI/Settings/AboutSettingsView.swift "About pane"
+[7]: ../voiceflow/UI/Popover/MenuBarPopoverView.swift "Menu-bar popover integration"
+[8]: ../voiceflow/Core/Transcription/ModelManager.swift "Canonical model lifecycle"
+[9]: ../voiceflow/Core/Transcription/TranscriptionEngine.swift "Model preload and replacement"
+[10]: ../voiceflowTests/UI/SettingsTests.swift "Settings and model-management tests"
+[11]: ../voiceflow/Core/Injection/InjectionCoordinator.swift "Completion sound persistence and playback"
+
+## Implementation inconsistency register
+
+The historical specification expected an implicit `NavigationSplitView` list selection and did not include completion sound, persistent download progress, cancellation, Finder navigation, fixed reopen geometry, exact-folder validation, or real load validation. The current implementation intentionally includes all of these behaviors. The old snapshot-path and “directory exists means installed” model rules are superseded by Specification 03.
+
+## Completion gate
+
+Do not begin Specification 07 until all Settings tests pass, all three panes are manually verified, model download/validation/load/detection works on a real model, progress survives tab navigation, and the core pipeline remains operational after changing settings or the active model.
