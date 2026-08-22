@@ -79,8 +79,10 @@ load_build_settings() {
 
 setting() {
     local key="$1"
-    printf '%s\n' "$BUILD_SETTINGS" | awk -F ' = ' -v key="$key" \
-        '$1 ~ "^[[:space:]]*" key "[[:space:]]*$" { print $2; exit }'
+    printf '%s\n' "$BUILD_SETTINGS" | awk -F ' = ' -v key="$key" '
+        $1 ~ "^[[:space:]]*" key "[[:space:]]*$" && value == "" { value = $2 }
+        END { if (value != "") print value }
+    '
 }
 
 check_project_configuration() {
