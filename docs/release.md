@@ -76,22 +76,21 @@ git push origin v1.0.0
 
 The workflow uses a pinned `macos-15` runner and selects Xcode `16.4`, which is compatible with the project’s macOS 14 deployment target. GitHub-hosted runner images are maintained separately from the workflow and can change over time, so the workflow selects an explicit Xcode version rather than depending on `macos-latest` defaults. The setup action’s documented version-selection behavior is described in [Setup Xcode version][2], and GitHub documents hosted-runner image maintenance in [About GitHub-hosted runners][3].
 
-The workflow performs these stages in order:
+A tag-triggered run performs the full production stages in order: it checks out the tag, validates the version, imports an encrypted Developer ID certificate into a temporary keychain, materializes the App Store Connect `.p8` key only under `$RUNNER_TEMP`, runs the XCTest suite, runs `./scripts/release.sh --check`, builds and notarizes the app, uploads only the final DMG and `SHA256SUMS.txt`, and creates the GitHub Release with generated notes. Temporary signing material is removed in an `always()` cleanup step.
 
-1. It checks out the tag and validates that it is a version tag such as `v1.0.0`.
-2. It imports an encrypted Developer ID certificate into a temporary keychain, with the certificate file and keychain removed in an `always()` cleanup step.
-3. It materializes the encrypted App Store Connect `.p8` key only under `$RUNNER_TEMP`.
-4. It runs the XCTest suite.
-5. It runs `./scripts/release.sh --check`.
-6. It runs `./scripts/release.sh VERSION`, which performs the build, signing, DMG creation, notarization, stapling, Gatekeeper verification, and checksum generation.
-7. It uploads only the final DMG and `SHA256SUMS.txt` as workflow artifacts.
-8. It creates the GitHub Release with generated notes and those two final artifacts.
+### Manual workflow execution without Apple credentials
+
+You can run the workflow from the GitHub web interface even before obtaining Apple credentials. Open **Actions → Release VoiceFlow → Run workflow**, choose the branch containing the workflow, select **`checks`** for `mode`, and optionally enter a version such as `1.0.0`. The manual checks mode runs all XCTest tests and builds an unsigned Release `VoiceFlow.app`; it does not attempt signing, notarization, stapling, Gatekeeper verification, or GitHub Release publication. If no version is entered, the workflow uses a temporary `0.0.0-manual.<run-number>` version.
+
+The `production-release` manual mode is also available, but it intentionally fails early unless all Apple signing and notarization secrets are configured. Use that mode only after the secrets below have been added. A pushed tag such as `v1.0.0` automatically selects the same production-release path.
 
 ### Required GitHub Actions secrets
 
-Configure these repository or organization secrets before pushing the first release tag:
+The secrets are required only for `production-release` mode and pushed version tags. The credential-free `checks` mode does not require any of them.
 
-| Secret | Required | Purpose |
+Configure these repository or organization secrets before running a production release:
+
+| Secret | Required for production | Purpose |
 |---|---:|---|
 | `DEVELOPER_ID_APPLICATION` | Yes | Developer ID Application identity string |
 | `DEVELOPER_CERTIFICATE_P12_BASE64` | Yes | Base64-encoded exported Developer ID certificate and private key |
@@ -101,7 +100,7 @@ Configure these repository or organization secrets before pushing the first rele
 | `APPLE_API_KEY_ID` | Yes | App Store Connect API key ID |
 | `APPLE_ISSUER_ID` | Yes | App Store Connect issuer ID |
 
-`GITHUB_TOKEN` is supplied by GitHub Actions through `github.token`; the workflow requests only `contents: write` so it can create the release. The workflow does not print secret values.
+`GITHUB_TOKEN` is supplied by GitHub Actions through `github.token`; the workflow requests `contents: write` so it can create the release. The workflow does not print secret values. The manual `checks` mode does not create a GitHub Release.
 
 To create the certificate secret, export the Developer ID Application certificate and private key from Keychain Access as a password-protected `.p12`, then base64-encode it locally. To create the API-key secret, base64-encode the downloaded App Store Connect `.p8` file. Delete any temporary encoded files after adding the secrets. Never commit `.p12`, `.cer`, `.pem`, `.p8`, provisioning profiles, or Apple credentials.
 
@@ -128,7 +127,7 @@ A real Apple notarization submission requires valid Apple credentials and a vali
 
 **Certificate import failure in CI.** Verify that the `.p12` secret was exported with its private key, encoded without line-wrapping corruption, and paired with the correct certificate password. The temporary keychain must be unlocked before importing and must be deleted after the job.
 
-**Missing credentials.** For local releases, set either `NOTARY_KEYCHAIN_PROFILE` or the App Store Connect API-key variables. For CI, verify all seven required secrets exist and that the `.p8` key belongs to the issuer and key ID configured in the workflow.
+**Missing credentials.** This is expected in manual `checks` mode; that mode deliberately skips signing and notarization. For a production release, configure all seven required secrets and verify that the `.p8` key belongs to the issuer and key ID configured in the workflow.
 
 **Notarization rejection.** Download the submission log with `xcrun notarytool log` using the same authentication method. Common causes include an invalid nested signature, missing Hardened Runtime, invalid entitlements, or unsigned embedded code. Do not continue to stapling or publishing after a rejected submission.
 

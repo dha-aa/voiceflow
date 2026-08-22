@@ -4,6 +4,21 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Run checks without Apple credentials, or run the full production release'
+        required: true
+        type: choice
+        default: checks
+        options:
+          - checks
+          - production-release
+      version:
+        description: 'Version for manual checks, for example 1.0.0 (optional)'
+        required: false
+        type: string
+
 permissions:
   contents: write
 
@@ -11,6 +26,7 @@ env:
   DEVELOPER_ID_APPLICATION: ${{ secrets.DEVELOPER_ID_APPLICATION }}
   APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
   APPLE_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
+  RELEASE_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'production-release' }}
 
 jobs:
   release:
@@ -27,20 +43,34 @@ jobs:
         with:
           xcode-version: '16.4'
 
-      - name: Validate tag version
+      - name: Resolve version
         id: version
         shell: bash
+        env:
+          MANUAL_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
-          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || {
-            echo "Expected a version tag such as v1.0.0; received: $TAG" >&2
-            exit 1
-          }
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            TAG="${GITHUB_REF_NAME}"
+            [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || {
+              echo "Expected a version tag such as v1.0.0; received: $TAG" >&2
+              exit 1
+            }
+            VERSION="${TAG#v}"
+          else
+            VERSION="${MANUAL_VERSION:-0.0.0-manual.${GITHUB_RUN_NUMBER}}"
+            [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || {
+              echo "Expected a version such as 1.0.0; received: $VERSION" >&2
+              exit 1
+            }
+            TAG="manual-${GITHUB_RUN_NUMBER}"
+          fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "mode=$RELEASE_MODE" >> "$GITHUB_OUTPUT"
 
       - name: Install Developer ID certificate in temporary keychain
+        if: env.RELEASE_MODE == 'production-release'
         env:
           CERTIFICATE_P12_BASE64: ${{ secrets.DEVELOPER_CERTIFICATE_P12_BASE64 }}
           CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_CERTIFICATE_PASSWORD }}
@@ -53,7 +83,7 @@ jobs:
           : "${KEYCHAIN_PASSWORD:?Missing KEYCHAIN_PASSWORD secret}"
           KEYCHAIN_PATH="$RUNNER_TEMP/voiceflow-signing.keychain-db"
           CERTIFICATE_PATH="$RUNNER_TEMP/developer-id.p12"
-          printf '%s' "$CERTIFICATE_P12_BASE64" | base64 --decode > "$CERTIFICATE_PATH"
+          printf '%s' "$CERTIFICATE_P12_BASE64" | base64 -D > "$CERTIFICATE_PATH"
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
@@ -64,6 +94,7 @@ jobs:
           rm -f "$CERTIFICATE_PATH"
 
       - name: Prepare App Store Connect API key
+        if: env.RELEASE_MODE == 'production-release'
         env:
           APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
         shell: bash
@@ -91,17 +122,44 @@ jobs:
             test \
             CODE_SIGNING_ALLOWED=NO
 
+      - name: Build unsigned Release for manual checks
+        if: env.RELEASE_MODE == 'checks'
+        shell: bash
+        env:
+          MANUAL_BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          DERIVED_DATA="$RUNNER_TEMP/voiceflow-unsigned-release"
+          xcodebuild \
+            -project voiceflow.xcodeproj \
+            -scheme voiceflow \
+            -configuration Release \
+            -derivedDataPath "$DERIVED_DATA" \
+            -destination 'platform=macOS' \
+            MARKETING_VERSION="${{ steps.version.outputs.version }}" \
+            CURRENT_PROJECT_VERSION="$MANUAL_BUILD_NUMBER" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+          APP="$DERIVED_DATA/Build/Products/Release/VoiceFlow.app"
+          test -d "$APP"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist")" = 'dha-aa.voiceflow'
+          echo "Unsigned Release validation completed for VoiceFlow.app"
+
       - name: Run release preflight
+        if: env.RELEASE_MODE == 'production-release'
         shell: bash
         run: ./scripts/release.sh --check
 
       - name: Build, sign, notarize, staple, verify, and checksum
+        if: env.RELEASE_MODE == 'production-release'
         shell: bash
         env:
           BUILD_NUMBER: ${{ github.run_number }}
         run: ./scripts/release.sh "${{ steps.version.outputs.version }}"
 
       - name: Upload verified release artifacts
+        if: env.RELEASE_MODE == 'production-release'
         uses: actions/upload-artifact@v4
         with:
           name: VoiceFlow-${{ steps.version.outputs.version }}
@@ -111,6 +169,7 @@ jobs:
             dist/SHA256SUMS.txt
 
       - name: Create GitHub Release
+        if: env.RELEASE_MODE == 'production-release'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
