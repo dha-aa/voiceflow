@@ -1,0 +1,116 @@
+name: CI Quality Gate
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
+
+jobs:
+  quality-gate:
+    name: CI Quality Gate
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Select pinned Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '16.4'
+
+      - name: Validate project metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          xcodebuild -project voiceflow.xcodeproj -scheme voiceflow -configuration Release -showBuildSettings \
+            | grep -E '^[[:space:]]+(PRODUCT_BUNDLE_IDENTIFIER|PRODUCT_NAME|PRODUCT_MODULE_NAME|MARKETING_VERSION|CURRENT_PROJECT_VERSION|MACOSX_DEPLOYMENT_TARGET|ASSETCATALOG_COMPILER_APPICON_NAME|CODE_SIGN_ENTITLEMENTS|ENABLE_APP_SANDBOX|ENABLE_HARDENED_RUNTIME)[[:space:]]=' \
+            | sort
+
+      - name: Run repository quality checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/release.sh
+          ruby -e "require 'yaml'; YAML.load_file('.github/workflows/ci.yml'); YAML.load_file('.github/workflows/release.yml'); puts 'Workflow YAML is valid'"
+          plutil -lint voiceflow/Resources/Info.plist voiceflow/Resources/voiceflow.entitlements
+          git diff --check
+          if find . -type f \
+            \( -name '*.p12' -o -name '*.cer' -o -name '*.pem' -o -name '*.p8' \
+            -o -name '*.mobileprovision' -o -name '*.provisionprofile' \) \
+            -not -path './.git/*' -print | grep -q .; then
+            echo 'Signing or provisioning material must not be committed.' >&2
+            exit 1
+          fi
+
+      - name: Build Debug
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project voiceflow.xcodeproj \
+            -scheme voiceflow \
+            -configuration Debug \
+            -derivedDataPath "$RUNNER_TEMP/voiceflow-debug" \
+            -destination 'platform=macOS' \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Run XCTest suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project voiceflow.xcodeproj \
+            -scheme voiceflow \
+            -configuration Debug \
+            -derivedDataPath "$RUNNER_TEMP/voiceflow-tests" \
+            -resultBundlePath "$RUNNER_TEMP/voiceflow-tests.xcresult" \
+            -destination 'platform=macOS' \
+            ONLY_ACTIVE_ARCH=YES \
+            -only-testing:voiceflowTests \
+            test \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO
+
+      - name: Upload XCTest result bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: voiceflow-xcresult-${{ github.run_number }}
+          if-no-files-found: ignore
+          path: ${{ runner.temp }}/voiceflow-tests.xcresult
+
+      - name: Publish CI summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## VoiceFlow CI Quality Gate'
+            echo
+            echo '| Check | Result |'
+            echo '|---|---|'
+            echo '| Project metadata | Completed in this job |'
+            echo '| Repository quality checks | Completed in this job |'
+            echo '| Debug build | Completed in this job |'
+            echo '| XCTest suite | Completed in this job |'
+            echo
+            echo 'The required status is the **CI Quality Gate** job. A failed step fails this check and blocks protected-branch merging when branch protection requires it.'
+          } >> "$GITHUB_STEP_SUMMARY"

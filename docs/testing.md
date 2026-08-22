@@ -41,6 +41,41 @@ Executed 102 tests, with 0 failures
 
 Use a fresh derived-data path when diagnosing a build or dependency-resolution issue. The test command disables code signing because XCTest verification is not a distribution-signing check.
 
+## Continuous integration quality gate
+
+The `.github/workflows/ci.yml` workflow runs on every pull request targeting `main`, every push to `main`, and manual workflow runs. Its required job is named **CI Quality Gate**. The job validates project metadata, checks the release script and workflow YAML, validates property lists, checks for prohibited signing material, builds the Debug app without signing, and runs the complete XCTest suite.
+
+GitHub reports each step in the pull request’s **Checks** section. The workflow also writes a job summary and uploads the XCTest result bundle when one is produced. A failed quality check, build, or test step causes the **CI Quality Gate** job to fail. When branch protection requires that check, GitHub prevents the pull request from merging until the failure is resolved.
+
+To reproduce the CI build and test stages locally, run:
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+xcodebuild \
+  -project voiceflow.xcodeproj \
+  -scheme voiceflow \
+  -configuration Debug \
+  -derivedDataPath /tmp/voiceflow-ci-debug \
+  -destination 'platform=macOS' \
+  ONLY_ACTIVE_ARCH=YES \
+  CODE_SIGNING_ALLOWED=NO \
+  CODE_SIGNING_REQUIRED=NO \
+  build
+
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+xcodebuild \
+  -project voiceflow.xcodeproj \
+  -scheme voiceflow \
+  -configuration Debug \
+  -derivedDataPath /tmp/voiceflow-ci-tests \
+  -destination 'platform=macOS' \
+  ONLY_ACTIVE_ARCH=YES \
+  -only-testing:voiceflowTests \
+  test \
+  CODE_SIGNING_ALLOWED=NO \
+  CODE_SIGNING_REQUIRED=NO
+```
+
 ### Test coverage map
 
 | Area | Representative coverage |
