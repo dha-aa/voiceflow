@@ -3,6 +3,13 @@
 VoiceFlow is a privacy-first native macOS menu-bar dictation application. Hold **Fn** to record, release it to transcribe locally with WhisperKit, and inject the resulting text into the focused text field. Audio and dictated content remain on the Mac during normal operation; VoiceFlow does not send microphone audio or transcription text to a remote service.
 
 > **Current distribution note:** VoiceFlow supports an unsigned DMG for development or private sharing. A signed and notarized DMG is also supported when Apple Developer credentials are configured. Unsigned applications can trigger macOS Gatekeeper warnings.
+>
+>
+>
+ 🎥 Watch the full build:
+## 🎥 Video
+
+[![Watch the video](https://img.youtube.com/vi/eOIdjLaHOHY/maxresdefault.jpg)](https://youtu.be/eOIdjLaHOHY)
 
 ## Features
 
@@ -40,6 +47,7 @@ If microphone permission, Accessibility permission, model installation, transcri
 VoiceFlow currently targets **macOS 14.0 or later** and is built with the native SwiftUI/AppKit stack. Development requires the full Xcode installation, not only Command Line Tools. The project uses Swift Package Manager through the Xcode project and depends on [Argmax OSS Swift](https://github.com/argmaxinc/argmax-oss-swift) for WhisperKit.
 
 A real dictation session requires microphone permission and Accessibility or Input Monitoring permission as requested by macOS. Text injection into another application cannot be verified from a build-only test; it must be tested manually with a permitted target application.
+
 
 ## Getting started
 
