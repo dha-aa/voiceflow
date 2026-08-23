@@ -184,6 +184,34 @@ final class ModelManagerTests: XCTestCase {
         XCTAssertNoThrow(try manager.resolveInstalledModel(id: "tiny"))
     }
 
+    func test_modelManager_importsCustomModelFromSelectedFolder() async throws {
+        let fixture = try makeFixture()
+        let source = try makeCustomModelSource(base: fixture.modelsDirectory)
+        let manager = makeManager(fixture: fixture)
+
+        try await manager.importCustomModel(from: source)
+
+        let installed = try manager.resolveInstalledModel(id: "hinglish")
+        XCTAssertEqual(installed.lastPathComponent, "Oriserve_Whisper-Hindi2Hinglish-Prime_889MB")
+        XCTAssertTrue(manager.isModelDownloaded(variantId: "hinglish"))
+        XCTAssertEqual(manager.whisperKitModelID(for: "hinglish"), "Oriserve_Whisper-Hindi2Hinglish-Prime_889MB")
+        XCTAssertEqual(manager.availableModels.first(where: { $0.id == "hinglish" })?.displayName, "Hindi/Hinglish")
+    }
+
+    func test_modelManager_importRejectsWrongFolderName() async throws {
+        let fixture = try makeFixture()
+        let source = fixture.modelsDirectory.appendingPathComponent("not-a-whisper-model", isDirectory: true)
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        let manager = makeManager(fixture: fixture)
+
+        do {
+            try await manager.importCustomModel(from: source)
+            XCTFail("Expected invalid custom model directory")
+        } catch let error as voiceflow.ModelManager.ModelManagerError {
+            XCTAssertEqual(error, .invalidModelDirectory)
+        }
+    }
+
     func test_modelManager_deleteModel_blocksActiveModel() throws {
         let fixture = try makeFixture()
         _ = try makeValidDownloadedModelDirectory(base: fixture.modelsDirectory, variant: "tiny")
@@ -232,6 +260,19 @@ final class ModelManagerTests: XCTestCase {
             .appendingPathComponent("whisperkit-coreml", isDirectory: true)
             .appendingPathComponent("openai_whisper-\(variant)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
+
+    private func makeCustomModelSource(base: URL) throws -> URL {
+        let directory = base.appendingPathComponent("Oriserve_Whisper-Hindi2Hinglish-Prime_889MB", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        for component in ["MelSpectrogram", "AudioEncoder", "TextDecoder"] {
+            try FileManager.default.createDirectory(
+                at: directory.appendingPathComponent("\(component).mlmodelc"),
+                withIntermediateDirectories: true
+            )
+            try Data([1]).write(to: directory.appendingPathComponent("\(component).mlmodelc/model.mlmodel"))
+        }
         return directory
     }
 

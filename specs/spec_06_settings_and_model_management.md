@@ -15,6 +15,7 @@ The Settings layer must let users:
 - Enable/disable the recording overlay and configure success feedback.
 - Refresh the live WhisperKit model catalog.
 - Download models with persistent progress and cancellation.
+- Import a local WhisperKit Core ML model folder through a native folder picker.
 - See models only as installed after structural and real load validation succeeds.
 - Select one valid installed model as active.
 - Delete inactive models with confirmation and prevent active-model deletion.
@@ -28,7 +29,7 @@ The Settings layer must let users:
 | `SettingsWindowController` | `voiceflow/UI/Settings/SettingsWindowController.swift` | Singleton Settings window lifecycle and fixed geometry |
 | `SettingsView` | `voiceflow/UI/Settings/SettingsView.swift` | Three-destination sidebar and detail routing |
 | `GeneralSettingsView` | `voiceflow/UI/Settings/GeneralSettingsView.swift` | General preferences and launch-at-login |
-| `ModelsSettingsView` | `voiceflow/UI/Settings/ModelsSettingsView.swift` | Model catalog, actions, progress, alerts, and Finder access |
+| `ModelsSettingsView` | `voiceflow/UI/Settings/ModelsSettingsView.swift` | Model catalog, download/import actions, progress, alerts, and Finder access |
 | `ModelDownloadCoordinator` | `voiceflow/UI/Settings/ModelDownloadCoordinator.swift` | Long-lived download task, progress, cancel, and error state |
 | `AboutSettingsView` | `voiceflow/UI/Settings/AboutSettingsView.swift` | Branding, metadata, links, and license |
 | `MenuBarPopoverView` | `voiceflow/UI/Popover/MenuBarPopoverView.swift` | Settings entry point and active model/status summary |
@@ -64,7 +65,7 @@ Changing the overlay setting takes effect through `UserDefaults.didChangeNotific
 
 ## 5. Models pane
 
-`ModelsSettingsView` binds to the shared `ModelManager` and the long-lived `ModelDownloadCoordinator`. It contains a refresh control, `Installed Models` and `Available to Download` sections, and a `Model location` area showing the canonical path with an **Open in Finder** button.
+`ModelsSettingsView` binds to the shared `ModelManager` and the long-lived `ModelDownloadCoordinator`. It contains refresh and **Import Model** controls, `Installed Models` and `Available to Download` sections, and a `Model location` area showing the canonical path with an **Open in Finder** button.
 
 The pane does not hardcode model names, sizes, or installation state. It renders the current `availableModels` supplied by `ModelManager`, partitioned by `isDownloaded`. The manager’s valid installation contract is described in Specification 03.
 
@@ -76,12 +77,15 @@ Each row displays the derived model name, a recommended marker when applicable, 
 | Installed and inactive | `Set Active`, `Delete` with confirmation |
 | Not installed | `Download`; disabled when another download is active |
 | Active download | Linear progress, percentage, and `Cancel`/`Cancelling…` |
+| Importing | Native folder picker followed by staging, validation, load validation, and managed promotion |
 
 `Set Active` calls `ModelManager.selectModel(id:)`. Only a preflight-valid installed model can become selected, and selection changes trigger transcription-engine replacement/preload.
 
 `Download` calls `ModelDownloadCoordinator.startDownload(id:)`. The coordinator keeps `activeModelID`, `progress`, `errorMessage`, and `isCancelling` outside the SwiftUI view lifecycle, so switching to General or About does not stop or erase progress. The download task invokes `ModelManager.downloadModel`, clamps progress, refreshes the model list after completion, and clears transient state. Cancellation cancels the task and does not report a false successful installation.
 
 After a model download, `ModelManager` validates the exact SDK-returned folder, checks required Core ML components, confirms the path is inside the app-owned root, optionally loads it through WhisperKit, and only then marks it installed. Validation or load failure is shown as an actionable alert and the failed artifact is removed when safe.
+
+`Import Model` opens a native macOS folder picker. The selected folder must match the registered custom model folder name `Oriserve_Whisper-Hindi2Hinglish-Prime_889MB` and contain `MelSpectrogram.mlmodelc`, `AudioEncoder.mlmodelc`, and `TextDecoder.mlmodelc` directly inside it. The manager copies the source into a temporary staging directory under `models/nitinh/whisperkit-hinglish-coreml/`, performs the same structural checks, optionally runs real WhisperKit load validation with the remote model ID `Oriserve_Whisper-Hindi2Hinglish-Prime_889MB`, and moves the staged folder into its final managed location only after validation succeeds. Source symlinks, invalid folder names, duplicate installs, invalid components, and failed load validation are rejected without exposing a partial installation. The importer uses security-scoped access only for the duration of the copy and does not upload the model or add network behavior to transcription.
 
 The pane shows a destructive confirmation before deleting an inactive model. The active model cannot be deleted. After successful deletion, it refreshes the catalog and local installation state. The Finder button opens `modelManager.downloadBase`, which is the app-owned model root, not a legacy snapshot directory.
 
@@ -111,6 +115,7 @@ The current Settings tests are in `voiceflowTests/UI/SettingsTests.swift` and co
 - Completion sound default, persistence, and effect selection.
 - Installed/available model rendering and active selection persistence.
 - Download progress, completion, exact-folder validation, and failed WhisperKit load behavior.
+- Custom Oriserve folder import, staging, validation, duplicate rejection, and alias-to-remote-ID resolution.
 - Download progress surviving outside the Models view.
 - Blocking deletion of the active model.
 
@@ -124,13 +129,14 @@ Manual verification must confirm:
 6. Overlay visibility changes apply during the next interaction.
 7. Models refreshes from the live catalog and separates validated installed models from downloadable models.
 8. Download shows progress and Cancel; switching tabs preserves progress; returning to Models shows the active operation.
-9. A successful download is validated, load-checked, detected immediately, and reused by transcription.
-10. A failed structural or WhisperKit load validation is not shown as installed.
-11. Finder opens the canonical app-owned model folder.
-12. Active-model deletion is blocked; inactive deletion requires confirmation.
-13. Selecting a different installed model triggers replacement/preload before the next recording.
-14. About shows correct metadata and links.
-15. The core TextEdit pipeline and overlay remain regression-free.
+9. Import Model accepts the Oriserve folder, shows import/validation progress, detects the installed model immediately, and rejects invalid or duplicate folders safely.
+10. A successful download or import is validated, load-checked, detected immediately, and reused by transcription.
+11. A failed structural or WhisperKit load validation is not shown as installed.
+12. Finder opens the canonical app-owned model folder.
+13. Active-model deletion is blocked; inactive deletion requires confirmation.
+14. Selecting a different installed model triggers replacement/preload before the next recording.
+15. About shows correct metadata and links.
+16. The core TextEdit pipeline and overlay remain regression-free.
 
 ## 9. Acceptance criteria
 
@@ -142,7 +148,7 @@ Manual verification must confirm:
 - Models are supplied by the live catalog and are not hardcoded in the UI.
 - Only preflight-valid, optionally real-load-validated models appear installed.
 - Download progress and cancellation survive navigation away from the Models pane.
-- Successful download refreshes the list immediately and failed download/load does not mark the model installed.
+- Successful download or custom-folder import refreshes the list immediately, and failed validation/load does not mark the model installed.
 - The canonical model folder can be opened in Finder.
 - Active model deletion is prevented; inactive deletion is confirmed and verified.
 - Selection changes are persisted and cause transcription-engine model replacement/preload.

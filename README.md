@@ -10,7 +10,7 @@ VoiceFlow is a privacy-first native macOS menu-bar dictation application. Hold *
 |---|---|
 | Push-to-talk | A sustained Fn hold starts one recording session; releasing Fn stops it. A brief tap does not intentionally start dictation. |
 | Local transcription | WhisperKit runs the selected Core ML model locally. The app reuses a loaded session when the selected model has not changed. |
-| Model management | Settings provides model availability, download progress, selection, installation detection, validation, deletion protection, and Finder navigation. |
+| Model management | Settings provides model availability, download progress, local Core ML model-folder import, selection, installation detection, validation, deletion protection, and Finder navigation. |
 | Readiness gating | VoiceFlow preloads the selected model and waits for it to be ready before recording begins. |
 | Text injection | The focused application is captured when recording begins. Accessibility-based insertion is attempted before keyboard-event fallback. |
 | Recording overlay | A compact floating HUD communicates Loading model, Listening, Processing, Done, and error states. |
@@ -53,13 +53,13 @@ open voiceflow.xcodeproj
 
 Select the `voiceflow` scheme and run the app from Xcode. VoiceFlow appears as a menu-bar application rather than a normal Dock application. Grant microphone access in **System Settings → Privacy & Security → Microphone**. Grant Accessibility or Input Monitoring access in **System Settings → Privacy & Security** when the app requests it or when text injection is blocked.
 
-Open the menu-bar popover and go to **Settings → Models**. Select an installed model, or download one before starting dictation. VoiceFlow stores its canonical model root under:
+Open the menu-bar popover and go to **Settings → Models**. Select an installed model, download one, or use **Import Model** to choose a local WhisperKit Core ML model folder such as `Oriserve_Whisper-Hindi2Hinglish-Prime_889MB` from Finder. VoiceFlow validates the imported folder, verifies it can load through WhisperKit, and copies it into the managed model directory before showing it as installed. VoiceFlow stores its canonical model root under:
 
 ```text
 ~/Library/Application Support/dha-aa.voiceflow/models
 ```
 
-WhisperKit’s downloaded repository layout is nested below that root under `models/argmaxinc/whisperkit-coreml/openai_whisper-<variant>`. VoiceFlow validates the exact model folder and confirms that WhisperKit can load the required model components before marking a model as installed.
+WhisperKit’s downloaded repository layout is nested below that root under `models/argmaxinc/whisperkit-coreml/openai_whisper-<variant>`. Registered custom models use their own repository namespace and exact folder name, for example `models/nitinh/whisperkit-hinglish-coreml/Oriserve_Whisper-Hindi2Hinglish-Prime_889MB`. VoiceFlow validates the exact model folder and confirms that WhisperKit can load the required model components before marking a model as installed.
 
 ## Repository layout
 

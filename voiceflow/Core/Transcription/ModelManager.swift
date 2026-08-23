@@ -10,6 +10,16 @@ import Observation
 import OSLog
 import WhisperKit
 
+struct WhisperModelDefinition: Identifiable, Equatable {
+    let id: String
+    let displayName: String
+    let repository: String
+    let remoteModelID: String
+    let folderName: String
+    let language: String?
+    let isRecommended: Bool
+}
+
 struct WhisperModel: Identifiable, Equatable {
     let id: String
     let displayName: String
@@ -20,13 +30,14 @@ struct WhisperModel: Identifiable, Equatable {
 
     init(
         id: String,
+        displayName: String? = nil,
         sizeOnDisk: Int64?,
         isDownloaded: Bool,
         isRecommended: Bool,
         isActive: Bool
     ) {
         self.id = id
-        self.displayName = Self.makeDisplayName(from: id)
+        self.displayName = displayName ?? Self.makeDisplayName(from: id)
         self.sizeOnDisk = sizeOnDisk
         self.isDownloaded = isDownloaded
         self.isRecommended = isRecommended
@@ -174,6 +185,17 @@ final class ModelManager {
     private static let repositoryNamespace = "argmaxinc"
     private static let repositoryName = "whisperkit-coreml"
     private static let modelDirectoryPrefix = "openai_whisper-"
+    private static let customModelDefinitions: [WhisperModelDefinition] = [
+        WhisperModelDefinition(
+            id: "hinglish",
+            displayName: "Hindi/Hinglish",
+            repository: "nitinh/whisperkit-hinglish-coreml",
+            remoteModelID: "Oriserve_Whisper-Hindi2Hinglish-Prime_889MB",
+            folderName: "Oriserve_Whisper-Hindi2Hinglish-Prime_889MB",
+            language: "en",
+            isRecommended: false
+        )
+    ]
 
     /// The one application-owned directory used as WhisperKit's download base.
     /// In a sandboxed build, Foundation resolves this Application Support URL
@@ -221,6 +243,16 @@ final class ModelManager {
 
     /// The canonical WhisperKit download base used by catalog and download APIs.
     var downloadBase: URL { modelsDirectory }
+
+    /// Returns the model identity expected by WhisperKit for a VoiceFlow model ID.
+    func whisperKitModelID(for id: String) -> String {
+        let normalizedID = Self.variantID(from: id)
+        return Self.customModelDefinitions.first {
+            $0.id == normalizedID ||
+                $0.remoteModelID == normalizedID ||
+                $0.folderName == normalizedID
+        }?.remoteModelID ?? normalizedID
+    }
 
     init(
         catalog: WhisperKitModelCatalog = LiveWhisperKitModelCatalog(),
@@ -272,6 +304,24 @@ final class ModelManager {
                     isActive: selectedModelId == variantID && report.isValid
                 )
             }
+
+        for definition in Self.customModelDefinitions {
+            let report = preflight(modelID: definition.id)
+            guard report.isValid else { continue }
+            if let directory = report.resolvedModelDirectory {
+                VoiceFlowLog.model.info("model_detected model_id=\(definition.id, privacy: .public) model_directory=\(directory.path, privacy: .public) source=custom_import")
+            }
+            models.append(
+                WhisperModel(
+                    id: definition.id,
+                    displayName: definition.displayName,
+                    sizeOnDisk: report.resolvedModelDirectory.flatMap(directorySize),
+                    isDownloaded: true,
+                    isRecommended: definition.isRecommended,
+                    isActive: selectedModelId == definition.id
+                )
+            )
+        }
 
         var seen = Set<String>()
         models = models.filter { seen.insert($0.id).inserted }
@@ -372,6 +422,63 @@ final class ModelManager {
         }
     }
 
+    /// Imports the registered custom Core ML model from a user-selected folder.
+    /// The source is copied into the repository-aware managed directory only
+    /// after structural and real WhisperKit load validation succeed.
+    func importCustomModel(from sourceDirectory: URL) async throws {
+        guard let definition = Self.customModelDefinitions.first else {
+            throw ModelManagerError.invalidModelIdentifier
+        }
+        let source = sourceDirectory.standardizedFileURL
+        let sourceValues = try source.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+        guard sourceValues.isDirectory == true,
+              sourceValues.isSymbolicLink != true,
+              source.lastPathComponent == definition.folderName else {
+            VoiceFlowLog.model.error("model_import_rejected reason=source_folder_invalid")
+            throw ModelManagerError.invalidModelDirectory
+        }
+
+        let destination = modelDirectory(for: definition.id)
+        guard !fileManager.fileExists(atPath: destination.path) else {
+            throw ModelManagerError.modelAlreadyInstalled
+        }
+
+        let repositoryRoot = repositoryDirectory(for: definition.id)
+        let stagingRoot = repositoryRoot.appendingPathComponent(".voiceflow-import-\(UUID().uuidString)", isDirectory: true)
+        let stagedModel = stagingRoot.appendingPathComponent(definition.folderName, isDirectory: true)
+        try fileManager.createDirectory(at: stagingRoot, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: stagingRoot) }
+
+        VoiceFlowLog.model.info("model_import_started model_id=\(definition.id, privacy: .public) source_directory=\(source.path, privacy: .public)")
+        do {
+            try fileManager.copyItem(at: source, to: stagedModel)
+            let report = makePreflightReport(modelID: definition.id, directory: stagedModel)
+            log(report: report)
+            guard report.isValid else {
+                throw ModelManagerError.invalidModelDirectory
+            }
+
+            if let modelLoadValidator {
+                try await modelLoadValidator.validateModelLoad(
+                    modelID: definition.remoteModelID,
+                    modelFolder: stagedModel,
+                    downloadBase: modelsDirectory
+                )
+            }
+
+            try fileManager.createDirectory(at: repositoryRoot, withIntermediateDirectories: true)
+            try fileManager.moveItem(at: stagedModel, to: destination)
+            refreshLocalModelState(for: definition.id)
+            VoiceFlowLog.model.info("model_import_succeeded model_id=\(definition.id, privacy: .public) managed_directory=\(destination.path, privacy: .public)")
+        } catch let error as ModelManagerError {
+            VoiceFlowLog.model.error("model_import_failed model_id=\(definition.id, privacy: .public) category=\(String(describing: error), privacy: .public)")
+            throw error
+        } catch {
+            VoiceFlowLog.model.error("model_import_failed model_id=\(definition.id, privacy: .public) category=runtime error=\(String(describing: error), privacy: .public)")
+            throw ModelManagerError.invalidModelDirectory
+        }
+    }
+
     /// Deletes all installed snapshot directories for an inactive model and
     /// verifies that no matching model directory remains.
     func deleteModel(id: String) throws {
@@ -442,6 +549,7 @@ final class ModelManager {
             let existing = availableModels[index]
             availableModels[index] = WhisperModel(
                 id: variantID,
+                displayName: Self.customModelDefinitions.first(where: { $0.id == variantID })?.displayName,
                 sizeOnDisk: report.resolvedModelDirectory.flatMap(directorySize),
                 isDownloaded: true,
                 isRecommended: existing.isRecommended,
@@ -451,6 +559,7 @@ final class ModelManager {
             availableModels.append(
                 WhisperModel(
                     id: variantID,
+                    displayName: Self.customModelDefinitions.first(where: { $0.id == variantID })?.displayName,
                     sizeOnDisk: report.resolvedModelDirectory.flatMap(directorySize),
                     isDownloaded: true,
                     isRecommended: false,
@@ -473,17 +582,14 @@ final class ModelManager {
 
     private func modelDirectories(for variantID: String) -> [URL] {
         guard !variantID.isEmpty else { return [] }
-        let repositoryDirectory = modelsDirectory
-            .appendingPathComponent(Self.hubModelsDirectory, isDirectory: true)
-            .appendingPathComponent(Self.repositoryNamespace, isDirectory: true)
-            .appendingPathComponent(Self.repositoryName, isDirectory: true)
+        let repositoryDirectory = repositoryDirectory(for: variantID)
         guard let repositoryModels = try? fileManager.contentsOfDirectory(
             at: repositoryDirectory,
             includingPropertiesForKeys: [.isDirectoryKey],
             options: [.skipsHiddenFiles]
         ) else { return [] }
 
-        let modelDirectoryName = "\(Self.modelDirectoryPrefix)\(variantID)"
+        let modelDirectoryName = expectedFolderName(for: variantID)
         return repositoryModels
             .filter { $0.lastPathComponent == modelDirectoryName }
             .filter { url in
@@ -491,6 +597,39 @@ final class ModelManager {
                       values.isDirectory == true else { return false }
                 return fileManager.fileExists(atPath: url.path)
             }
+    }
+
+    private func repositoryDirectory(for modelID: String) -> URL {
+        if let definition = Self.customModelDefinitions.first(where: {
+            $0.id == modelID || $0.remoteModelID == modelID || $0.folderName == modelID
+        }) {
+            let parts = definition.repository.split(separator: "/")
+            let namespace = parts.first.map(String.init) ?? ""
+            let repository = parts.dropFirst().first.map(String.init) ?? ""
+            return modelsDirectory
+                .appendingPathComponent(Self.hubModelsDirectory, isDirectory: true)
+                .appendingPathComponent(namespace, isDirectory: true)
+                .appendingPathComponent(repository, isDirectory: true)
+        }
+
+        return modelsDirectory
+            .appendingPathComponent(Self.hubModelsDirectory, isDirectory: true)
+            .appendingPathComponent(Self.repositoryNamespace, isDirectory: true)
+            .appendingPathComponent(Self.repositoryName, isDirectory: true)
+    }
+
+    private func expectedFolderName(for modelID: String) -> String {
+        if let definition = Self.customModelDefinitions.first(where: {
+            $0.id == modelID || $0.remoteModelID == modelID || $0.folderName == modelID
+        }) {
+            return definition.folderName
+        }
+        return "\(Self.modelDirectoryPrefix)\(modelID)"
+    }
+
+    private func modelDirectory(for modelID: String) -> URL {
+        repositoryDirectory(for: modelID)
+            .appendingPathComponent(expectedFolderName(for: modelID), isDirectory: true)
     }
 
     private func isSafeToRemoveDownloadedArtifact(_ directory: URL) -> Bool {
@@ -519,14 +658,14 @@ final class ModelManager {
         let noSymlink = resolvedDirectory.map { directory in
             (try? directory.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true
         } ?? false
-        let idMatches = resolvedDirectory?.lastPathComponent == "\(Self.modelDirectoryPrefix)\(modelID)"
+        let idMatches = resolvedDirectory?.lastPathComponent == expectedFolderName(for: modelID)
         let componentDiagnostics = resolvedDirectory.map(componentDiagnostics(in:)) ?? []
         let components = exists && isDirectory && componentDiagnostics.allSatisfy(\.exists)
         let nestedDirectory = resolvedDirectory.flatMap { nestedModelDirectory(in: $0, modelID: modelID) }
         let config = resolvedDirectory.flatMap { folder -> WhisperKitConfig? in
             guard components else { return nil }
             return WhisperKitConfig(
-                model: modelID,
+                model: whisperKitModelID(for: modelID),
                 modelFolder: folder.path,
                 load: false,
                 download: false
@@ -592,7 +731,7 @@ final class ModelManager {
     }
 
     private func nestedModelDirectory(in directory: URL, modelID: String) -> URL? {
-        let nested = directory.appendingPathComponent("\(Self.modelDirectoryPrefix)\(modelID)", isDirectory: true)
+        let nested = directory.appendingPathComponent(expectedFolderName(for: modelID), isDirectory: true)
         guard fileManager.fileExists(atPath: nested.path),
               (try? nested.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else {
             return nil
@@ -630,6 +769,7 @@ final class ModelManager {
 
     enum ModelManagerError: Error, Equatable {
         case invalidModelIdentifier
+        case modelAlreadyInstalled
         case modelNotDownloaded
         case invalidModelDirectory
         case modelLoadFailed

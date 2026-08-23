@@ -5,6 +5,7 @@
 
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ModelsSettingsView: View {
     @Bindable var modelManager: ModelManager
@@ -13,6 +14,8 @@ struct ModelsSettingsView: View {
     @State private var showingActiveModelAlert = false
     @State private var errorMessage: String?
     @State private var isRefreshing = false
+    @State private var isImporting = false
+    @State private var showingModelImporter = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -27,6 +30,11 @@ struct ModelsSettingsView: View {
                     .controlSize(.small)
                     .padding(.top, 12)
             }
+            if isImporting {
+                ProgressView("Importing and validating model...")
+                    .controlSize(.small)
+                    .padding(.top, 8)
+            }
         }
         .padding(24)
         .navigationTitle("Models")
@@ -34,6 +42,13 @@ struct ModelsSettingsView: View {
             if modelManager.availableModels.isEmpty && !downloadCoordinator.isDownloading {
                 refreshModels()
             }
+        }
+        .fileImporter(
+            isPresented: $showingModelImporter,
+            allowedContentTypes: [.folder],
+            allowsMultipleSelection: false
+        ) { result in
+            importModel(from: result)
         }
         .alert(
             "Delete model?",
@@ -70,6 +85,14 @@ struct ModelsSettingsView: View {
             Text("Models")
                 .font(.title2.bold())
             Spacer()
+            Button {
+                showingModelImporter = true
+            } label: {
+                Label("Import Model", systemImage: "square.and.arrow.down")
+            }
+            .buttonStyle(.bordered)
+            .help("Import a WhisperKit Core ML model folder")
+            .disabled(isImporting || isRefreshing || downloadCoordinator.isDownloading)
             Button {
                 refreshModels()
             } label: {
@@ -189,8 +212,40 @@ struct ModelsSettingsView: View {
         }
     }
 
+    private func importModel(from result: Result<[URL], Error>) {
+        let source: URL
+        switch result {
+        case .success(let urls):
+            guard let selectedURL = urls.first else {
+                errorMessage = "No model folder was selected."
+                return
+            }
+            source = selectedURL
+        case .failure(let error):
+            errorMessage = errorDescription(for: error)
+            return
+        }
+
+        isImporting = true
+        Task { @MainActor in
+            let accessed = source.startAccessingSecurityScopedResource()
+            defer {
+                if accessed {
+                    source.stopAccessingSecurityScopedResource()
+                }
+                isImporting = false
+            }
+            do {
+                try await modelManager.importCustomModel(from: source)
+                try await modelManager.refreshModels()
+            } catch {
+                errorMessage = errorDescription(for: error)
+            }
+        }
+    }
+
     private func refreshModels() {
-        guard !isRefreshing, !downloadCoordinator.isDownloading else { return }
+        guard !isRefreshing, !isImporting, !downloadCoordinator.isDownloading else { return }
         isRefreshing = true
         Task { @MainActor in
             defer { isRefreshing = false }
@@ -206,6 +261,7 @@ struct ModelsSettingsView: View {
         if let modelError = error as? ModelManager.ModelManagerError {
             switch modelError {
             case .invalidModelIdentifier: return "The model identifier is invalid."
+            case .modelAlreadyInstalled: return "This model is already installed."
             case .modelNotDownloaded: return "The model is not installed."
             case .invalidModelDirectory: return "The downloaded model failed validation."
             case .modelLoadFailed: return "The downloaded model could not be loaded by WhisperKit."

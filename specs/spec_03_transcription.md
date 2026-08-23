@@ -4,13 +4,13 @@
 
 Specification 03 consumes the audio URL and captured target application from Specification 02 and defines the complete local model and transcription layer. It is the source of truth for model storage, discovery, validation, loading, preloading, caching, text cleanup, and error mapping.
 
-The current implementation uses WhisperKit 0.18.0 through the resolved `argmax-oss-swift` package. Model catalog access and model downloads use the live `argmaxinc/whisperkit-coreml` repository, but all model files and inference remain local to the app’s configured model directory. [1] [2]
+The current implementation uses WhisperKit 0.18.0 through the resolved `argmax-oss-swift` package. Standard model catalog access and downloads use the live `argmaxinc/whisperkit-coreml` repository. Registered custom models may use an explicit repository and folder definition, while all model files and inference remain local to the app’s configured model directory. [1] [2]
 
 ## 1. Goals
 
 This stage must provide:
 
-- A model catalog that merges live remote model identifiers with local validated installation state and device recommendations.
+- A model catalog that merges live remote model identifiers with local validated installation state, device recommendations, and registered custom model definitions.
 - A canonical app-owned download base under Application Support.
 - Structural and configuration preflight validation of downloaded models.
 - Optional real WhisperKit load validation before a model is marked installed.
@@ -40,6 +40,12 @@ A validated model variant such as `tiny.en` is stored at:
 
 ```text
 <downloadBase>/models/argmaxinc/whisperkit-coreml/openai_whisper-tiny.en/
+```
+
+The registered Oriserve custom model is stored under its repository namespace and exact folder name:
+
+```text
+<downloadBase>/models/nitinh/whisperkit-hinglish-coreml/Oriserve_Whisper-Hindi2Hinglish-Prime_889MB/
 ```
 
 The model directory must contain the required WhisperKit components directly inside it. The current structural contract requires each of the following to exist as either `.mlmodelc` or `.mlpackage`:
@@ -77,6 +83,7 @@ final class ModelManager {
     func refreshModels() async throws
     func selectModel(id: String)
     func downloadModel(id: String, progress: @escaping (Double) -> Void) async throws
+    func importCustomModel(from sourceDirectory: URL) async throws
     func deleteModel(id: String) throws
     func isModelDownloaded(variantId: String) -> Bool
     func resolveInstalledModel(id: String) throws -> URL
@@ -86,7 +93,7 @@ final class ModelManager {
 
 ### Catalog and display mapping
 
-`refreshModels()` calls `WhisperKit.fetchAvailableModels(from:matching:downloadBase:)` and `WhisperKit.recommendedRemoteModels(from:downloadBase:)` for repository `argmaxinc/whisperkit-coreml`. It maps each remote ID through `variantID(from:)`, removes the `openai_whisper-` prefix, filters empty IDs, removes duplicates, and sorts with localized-standard comparison.
+`refreshModels()` calls `WhisperKit.fetchAvailableModels(from:matching:downloadBase:)` and `WhisperKit.recommendedRemoteModels(from:downloadBase:)` for repository `argmaxinc/whisperkit-coreml`. It maps each standard remote ID through `variantID(from:)`, removes the `openai_whisper-` prefix, filters empty IDs, removes duplicates, and sorts with localized-standard comparison. It also appends a registered custom model when its repository-aware local folder passes preflight validation.
 
 Display names are derived at runtime by replacing hyphens and underscores with spaces and capitalizing each token. Model sizes are computed from validated local files when installed and are `nil`/`Size unknown` when not installed. Remote sizes must not be hardcoded.
 
@@ -107,12 +114,14 @@ A valid report requires:
 1. The exact model directory exists and is readable.
 2. The directory is inside the configured models root.
 3. The directory is not a symlink.
-4. Its name exactly matches `openai_whisper-<variant>`.
+4. Its name exactly matches the registered definition’s `folderName`; standard models use `openai_whisper-<variant>`, while custom models may use a repository-specific folder name.
 5. The three required Core ML components exist directly inside it.
 6. A `WhisperKitConfig` created with the same model folder and `load: false`, `download: false` resolves to the same canonical standardized path.
 7. No nested model directory has been produced inside the expected directory.
 
 `downloadModel(id:progress:)` passes the canonical `downloadBase` to `WhisperKit.download`. It validates the exact URL returned by the SDK, not a guessed or separately discovered path. If the returned path is outside the configured root, validation fails. If structural validation fails, a safe artifact matching the app root and model prefix is removed. If a `modelLoadValidator` is installed, the exact validated directory is loaded through the production engine before the model is accepted. Load failure removes the validated artifact and throws `.modelLoadFailed`.
+
+`importCustomModel(from:)` accepts only a user-selected directory with the registered custom folder name. It copies the source into a temporary directory under the repository-aware managed path, validates the Core ML components and exact folder identity there, optionally validates a real WhisperKit load using the custom model’s remote ID, and moves the staged directory into its final managed location only after all checks pass. Duplicate imports are rejected, source symlinks are rejected, and staging directories are removed on success or failure.
 
 Only after validation and optional real load validation succeed does the manager update the local model state as installed. Progress values are clamped to `0...1`. The manager logs path, status, component, and failure-category metadata only.
 
@@ -128,13 +137,15 @@ A production session is built with:
 
 ```swift
 WhisperKitConfig(
-    model: modelID,
+    model: whisperKitModelID,
     downloadBase: modelManager.downloadBase,
     modelFolder: validatedModelFolder.path,
     load: true,
     download: false
 )
 ```
+
+For standard models, `whisperKitModelID` is the normalized variant. For the registered custom model, the persisted app ID `hinglish` resolves to `Oriserve_Whisper-Hindi2Hinglish-Prime_889MB` before the session factory constructs the configuration. This keeps user-facing persistence separate from the identity expected by WhisperKit.
 
 The engine resolves the installed folder through `ModelManager.resolveInstalledModel(id:)` before loading. It never asks WhisperKit to download implicitly during transcription.
 
@@ -197,7 +208,7 @@ The current executable tests include:
 
 | Test file | Current coverage |
 |---|---|
-| `voiceflowTests/Transcription/ModelManagerTests.swift` | Canonical layout, direct Hub path, base model validation, required components, nested-directory rejection, invalid artifacts, selection and download behavior |
+| `voiceflowTests/Transcription/ModelManagerTests.swift` | Canonical and custom repository layouts, direct Hub path, custom-folder import, base model validation, required components, nested-directory rejection, invalid artifacts, selection and download behavior |
 | `voiceflowTests/Transcription/TranscriptionEngineTests.swift` | Selected-model requirement, incomplete-model rejection, session caching, exact-folder forwarding, prepare, background preload, replacement after selection, silent audio, runtime failures |
 | `voiceflowTests/Transcription/TranscriptionCoordinatorTests.swift` | Processing-state gate, artifact cleanup, processed callback text, success-to-injecting transition, missing-model mapping |
 | `voiceflowTests/Transcription/TranscriptionPipelineIntegrationTests.swift` | Audio fixture through transcription coordinator to injection-ready callback |
@@ -207,11 +218,12 @@ Tests must use temporary model directories and injected catalog/session factorie
 
 ## 8. Acceptance criteria
 
-- All catalog calls use repository `argmaxinc/whisperkit-coreml` and the one canonical Application Support download base.
-- Installed paths follow the direct Hub layout under `models/argmaxinc/whisperkit-coreml/openai_whisper-<variant>`.
+- Standard catalog calls use repository `argmaxinc/whisperkit-coreml` and the one canonical Application Support download base; registered custom models use their explicit repository metadata.
+- Standard installed paths follow the direct Hub layout under `models/argmaxinc/whisperkit-coreml/openai_whisper-<variant>`; custom imports use their registered repository namespace and exact folder name.
 - Legacy snapshot directories are not treated as installed by the current contract.
 - Validity requires `MelSpectrogram`, `AudioEncoder`, and `TextDecoder` as direct `.mlmodelc` or `.mlpackage` components.
 - The exact SDK-returned download folder is validated and loaded before being marked installed when a load validator is wired.
+- A custom model-folder import is staged, structurally validated, optionally real-load-validated, and promoted only after success.
 - Failed validation or load removes only a safe app-owned artifact.
 - Selection persistence accepts only a valid installed model and triggers model replacement on change.
 - Selected models preload asynchronously and matching sessions are reused.

@@ -194,9 +194,10 @@ final class TranscriptionEngine: WhisperKitModelLoadValidator, ModelReadinessChe
         let startedAt = Date()
         VoiceFlowLog.transcription.info("model_load_started model_id=\(selectedModelID, privacy: .public) whisperkit_model_folder=\(modelFolder.path, privacy: .public)")
         let downloadBase = modelManager.downloadBase
+        let whisperKitModelID = modelManager.whisperKitModelID(for: selectedModelID)
         let loadTask = Task.detached(priority: .userInitiated) { [sessionFactory] in
             try await sessionFactory.makeSession(
-                modelID: selectedModelID,
+                modelID: whisperKitModelID,
                 modelFolder: modelFolder,
                 downloadBase: downloadBase
             )

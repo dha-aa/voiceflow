@@ -76,6 +76,37 @@ final class TranscriptionEngineTests: XCTestCase {
         XCTAssertEqual(factory.makeCount, 1)
     }
 
+    func test_transcriptionEngine_mapsCustomModelAliasToWhisperKitModelID() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("engine-custom-manager-\(UUID().uuidString)", isDirectory: true)
+        let defaults = UserDefaults(suiteName: "engine-custom-tests-\(UUID().uuidString)")!
+        let manager = voiceflow.ModelManager(
+            catalog: EmptyModelCatalog(),
+            modelsDirectory: directory,
+            userDefaults: defaults
+        )
+        let modelDirectory = manager.downloadBase
+            .appendingPathComponent("models", isDirectory: true)
+            .appendingPathComponent("nitinh", isDirectory: true)
+            .appendingPathComponent("whisperkit-hinglish-coreml", isDirectory: true)
+            .appendingPathComponent("Oriserve_Whisper-Hindi2Hinglish-Prime_889MB", isDirectory: true)
+        try FileManager.default.createDirectory(at: modelDirectory, withIntermediateDirectories: true)
+        for component in ["MelSpectrogram", "AudioEncoder", "TextDecoder"] {
+            try FileManager.default.createDirectory(
+                at: modelDirectory.appendingPathComponent("\(component).mlmodelc"),
+                withIntermediateDirectories: true
+            )
+            try Data([1]).write(to: modelDirectory.appendingPathComponent("\(component).mlmodelc/model.mlmodel"))
+        }
+        manager.selectModel(id: "hinglish")
+        let factory = TestSessionFactory(result: .success("ready"))
+        let engine = TranscriptionEngine(modelManager: manager, sessionFactory: factory)
+
+        try await engine.prepare()
+
+        XCTAssertEqual(factory.modelIDs, ["Oriserve_Whisper-Hindi2Hinglish-Prime_889MB"])
+    }
+
     func test_transcriptionEngine_preloadsInBackgroundAndReusesPreloadedSession() async throws {
         let manager = try makeManagerWithDownloadedModel()
         manager.selectModel(id: "tiny.en")

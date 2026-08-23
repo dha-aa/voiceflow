@@ -89,6 +89,8 @@ final class ModelDownloadCoordinator {
             switch modelError {
             case .invalidModelIdentifier:
                 return "The model identifier is invalid."
+            case .modelAlreadyInstalled:
+                return "This model is already installed."
             case .modelNotDownloaded:
                 return "The model is not installed."
             case .invalidModelDirectory:
