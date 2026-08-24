@@ -9,6 +9,8 @@ import SwiftUI
 struct MenuBarPopoverView: View {
     @Bindable var stateManager: AppStateManager
     @Bindable var modelManager: ModelManager
+    @Bindable var speechRecognitionSettings: SpeechRecognitionSettings
+    @Bindable var parakeetModelManager: ParakeetModelManager
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -32,7 +34,11 @@ struct MenuBarPopoverView: View {
             Divider()
 
             Button {
-                SettingsWindowController.shared.show(modelManager: modelManager)
+                SettingsWindowController.shared.show(
+                    modelManager: modelManager,
+                    speechRecognitionSettings: speechRecognitionSettings,
+                    parakeetModelManager: parakeetModelManager
+                )
             } label: {
                 Label("Settings...", systemImage: "gearshape")
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -64,11 +70,16 @@ struct MenuBarPopoverView: View {
     }
 
     private var activeModelText: String {
-        guard let selectedID = modelManager.selectedModelId else {
-            return "No active model"
+        switch speechRecognitionSettings.selectedEngine {
+        case .whisperKit:
+            guard let selectedID = modelManager.selectedModelId else {
+                return "WhisperKit: No active model"
+            }
+            let displayName = modelManager.availableModels
+                .first { $0.id == selectedID }?.displayName ?? selectedID
+            return "WhisperKit: \(displayName)"
+        case .parakeet:
+            return "Parakeet: \(parakeetModelManager.isInstalled ? "Installed" : "Not installed")"
         }
-        let displayName = modelManager.availableModels
-            .first { $0.id == selectedID }?.displayName ?? selectedID
-        return "Model: \(displayName)"
     }
 }

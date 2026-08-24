@@ -10,6 +10,8 @@ import UniformTypeIdentifiers
 struct ModelsSettingsView: View {
     @Bindable var modelManager: ModelManager
     @Bindable var downloadCoordinator: ModelDownloadCoordinator
+    @Bindable var speechRecognitionSettings: SpeechRecognitionSettings
+    @Bindable var parakeetModelManager: ParakeetModelManager
     @State private var pendingDeletion: WhisperModel?
     @State private var showingActiveModelAlert = false
     @State private var errorMessage: String?
@@ -20,6 +22,7 @@ struct ModelsSettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
+            speechEngineSection
 
             ScrollView {
                 modelsList
@@ -101,6 +104,45 @@ struct ModelsSettingsView: View {
             .buttonStyle(.borderless)
             .help("Refresh available WhisperKit models")
             .disabled(isRefreshing || downloadCoordinator.isDownloading)
+        }
+        .padding(.bottom, 12)
+    }
+
+    private var speechEngineSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Picker("Speech recognition", selection: Binding(
+                get: { speechRecognitionSettings.selectedEngine },
+                set: { speechRecognitionSettings.selectEngine($0) }
+            )) {
+                ForEach(SpeechRecognitionSettings.Engine.allCases) { engine in
+                    Text(engine.displayName).tag(engine)
+                }
+            }
+            .pickerStyle(.menu)
+
+            if speechRecognitionSettings.selectedEngine == .parakeet {
+                HStack(spacing: 8) {
+                    Image(systemName: parakeetModelManager.isInstalled ? "checkmark.circle.fill" : "arrow.down.circle")
+                        .foregroundStyle(parakeetModelManager.isInstalled ? .green : .secondary)
+                    Text(parakeetModelManager.isInstalled ? "Parakeet model installed locally" : "Parakeet model is not installed")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    if parakeetModelManager.isLoading {
+                        ProgressView(value: parakeetModelManager.progress)
+                            .progressViewStyle(.linear)
+                            .frame(width: 120)
+                        Text("\(Int(parakeetModelManager.progress * 100))%")
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    } else if !parakeetModelManager.isInstalled {
+                        Button("Download") {
+                            startParakeetDownload()
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                }
+            }
         }
         .padding(.bottom, 12)
     }
@@ -189,6 +231,16 @@ struct ModelsSettingsView: View {
         downloadCoordinator.startDownload(id: model.id)
     }
 
+    private func startParakeetDownload() {
+        Task { @MainActor in
+            do {
+                try await parakeetModelManager.download { _ in }
+            } catch {
+                errorMessage = errorDescription(for: error)
+            }
+        }
+    }
+
     private func cancelDownload() {
         downloadCoordinator.cancelDownload()
     }
@@ -258,6 +310,9 @@ struct ModelsSettingsView: View {
     }
 
     private func errorDescription(for error: Error) -> String {
+        if let parakeetError = error as? ParakeetModelManager.ParakeetModelError {
+            return parakeetError.localizedDescription
+        }
         if let modelError = error as? ModelManager.ModelManagerError {
             switch modelError {
             case .invalidModelIdentifier: return "The model identifier is invalid."

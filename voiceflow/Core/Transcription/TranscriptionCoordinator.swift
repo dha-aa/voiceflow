@@ -9,7 +9,7 @@ import OSLog
 
 final class TranscriptionCoordinator {
     private let stateManager: AppStateManager
-    private let engine: TranscriptionEngine
+    private let engine: SpeechTranscriptionEngine
     private let processor: TextProcessor
     private let claudeProcessor: ClaudeCommandProcessor
 
@@ -18,7 +18,7 @@ final class TranscriptionCoordinator {
 
     init(
         stateManager: AppStateManager,
-        engine: TranscriptionEngine,
+        engine: SpeechTranscriptionEngine,
         processor: TextProcessor,
         claudeProcessor: ClaudeCommandProcessor = ClaudeCommandProcessor()
     ) {
@@ -80,7 +80,7 @@ final class TranscriptionCoordinator {
             }
             VoiceFlowLog.pipeline.error("claude_pipeline_failed audio_id=\(audioID, privacy: .public) app_error=\(String(describing: appError), privacy: .public)")
             stateManager.transition(to: .error(appError))
-        } catch let error as TranscriptionEngine.TranscriptionEngineError {
+        } catch let error as SpeechTranscriptionError {
             transitionToError(for: error, audioID: audioID, startedAt: startedAt)
         } catch {
             VoiceFlowLog.pipeline.error("transcription_pipeline_failed audio_id=\(audioID, privacy: .public) duration_seconds=\(Date().timeIntervalSince(startedAt), privacy: .public) category=runtime error=\(String(describing: error), privacy: .public)")
@@ -89,7 +89,7 @@ final class TranscriptionCoordinator {
     }
 
     private func transitionToError(
-        for error: TranscriptionEngine.TranscriptionEngineError,
+        for error: SpeechTranscriptionError,
         audioID: String,
         startedAt: Date
     ) {

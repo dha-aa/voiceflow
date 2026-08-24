@@ -9,6 +9,8 @@
 /* Begin PBXBuildFile section */
 		E346558D303997540070CF8F /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = E3BC6ED330397E9A0046E561 /* WhisperKit */; };
 		E346558E303997540070CF8F /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = E3BC6ED330397E9A0046E561 /* WhisperKit */; };
+		A1B2C3D4E5F60718293A4B5E /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D4E5F60718293A4B60 /* FluidAudio */; };
+		A1B2C3D4E5F60718293A4B61 /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D4E5F60718293A4B60 /* FluidAudio */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -56,17 +58,19 @@
 		E3BC6EC030397E9A0046E561 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
-			files = (
-				E346558D303997540070CF8F /* WhisperKit in Frameworks */,
-			);
+				files = (
+					E346558D303997540070CF8F /* WhisperKit in Frameworks */,
+					A1B2C3D4E5F60718293A4B5E /* FluidAudio in Frameworks */,
+				);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		E3BC6ED830397E9A0046E561 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
-			files = (
-				E346558E303997540070CF8F /* WhisperKit in Frameworks */,
-			);
+				files = (
+					E346558E303997540070CF8F /* WhisperKit in Frameworks */,
+					A1B2C3D4E5F60718293A4B61 /* FluidAudio in Frameworks */,
+				);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
@@ -111,6 +115,7 @@
 			name = voiceflow;
 			packageProductDependencies = (
 				E3BC6ED330397E9A0046E561 /* WhisperKit */,
+				A1B2C3D4E5F60718293A4B60 /* FluidAudio */,
 			);
 			productName = voiceflow;
 			productReference = E3BC6EC330397E9A0046E561 /* voiceflow.app */;
@@ -135,6 +140,7 @@
 			name = voiceflowTests;
 			packageProductDependencies = (
 				E3BC6ED330397E9A0046E561 /* WhisperKit */,
+				A1B2C3D4E5F60718293A4B60 /* FluidAudio */,
 			);
 			productName = voiceflowTests;
 			productReference = E3BC6ED430397E9A0046E561 /* voiceflowTests.xctest */;
@@ -164,9 +170,10 @@
 			);
 			mainGroup = E3BC6EBA30397E9A0046E561;
 			minimizedProjectReferenceProxies = 1;
-			packageReferences = (
-				E3BC6ED230397E9A0046E561 /* XCRemoteSwiftPackageReference "argmax-oss-swift" */,
-			);
+				packageReferences = (
+					E3BC6ED230397E9A0046E561 /* XCRemoteSwiftPackageReference "argmax-oss-swift" */,
+					A1B2C3D4E5F60718293A4B5F /* XCRemoteSwiftPackageReference "FluidAudio" */,
+				);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = E3BC6EC430397E9A0046E561 /* Products */;
 			projectDirPath = "";
@@ -476,6 +483,14 @@
 				minimumVersion = 0.9.0;
 			};
 		};
+		A1B2C3D4E5F60718293A4B5F /* XCRemoteSwiftPackageReference "FluidAudio" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/FluidInference/FluidAudio.git";
+			requirement = {
+				kind = exactVersion;
+				version = 0.15.6;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -483,6 +498,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = E3BC6ED230397E9A0046E561 /* XCRemoteSwiftPackageReference "argmax-oss-swift" */;
 			productName = WhisperKit;
+		};
+		A1B2C3D4E5F60718293A4B60 /* FluidAudio */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A1B2C3D4E5F60718293A4B5F /* XCRemoteSwiftPackageReference "FluidAudio" */;
+			productName = FluidAudio;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

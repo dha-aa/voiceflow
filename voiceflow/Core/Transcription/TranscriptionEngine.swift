@@ -47,7 +47,7 @@ private final class LiveWhisperKitSession: WhisperKitSession {
 }
 
 @MainActor
-final class TranscriptionEngine: WhisperKitModelLoadValidator, ModelReadinessChecking {
+final class TranscriptionEngine: WhisperKitModelLoadValidator, SpeechTranscriptionEngine {
     private let modelManager: ModelManager
     private let sessionFactory: WhisperKitSessionFactory
 
@@ -56,6 +56,8 @@ final class TranscriptionEngine: WhisperKitModelLoadValidator, ModelReadinessChe
     private var inFlightLoadTask: Task<WhisperKitSession, Error>?
     private var inFlightModelID: String?
     private var preloadTask: Task<Void, Never>?
+
+    var displayName: String { "WhisperKit" }
 
     init(modelManager: ModelManager) {
         self.modelManager = modelManager
@@ -270,23 +272,5 @@ final class TranscriptionEngine: WhisperKitModelLoadValidator, ModelReadinessChe
         return size.int64Value
     }
 
-    enum TranscriptionEngineError: Error {
-        case modelNotSelected
-        case modelNotInstalled
-        case modelFailedToLoad(underlying: Error)
-        case audioFileNotFound
-        case noAudioDetected
-        case transcriptionFailed(underlying: Error)
-
-        var category: String {
-            switch self {
-            case .modelNotSelected: "model_not_selected"
-            case .modelNotInstalled: "model_not_installed"
-            case .modelFailedToLoad: "model_load_failed"
-            case .audioFileNotFound: "audio_file_missing"
-            case .noAudioDetected: "no_audio_detected"
-            case .transcriptionFailed: "transcription_runtime_failed"
-            }
-        }
-    }
+    typealias TranscriptionEngineError = SpeechTranscriptionError
 }

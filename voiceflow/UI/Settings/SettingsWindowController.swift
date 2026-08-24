@@ -14,6 +14,8 @@ final class SettingsWindowController: NSWindowController {
     private static let minimumContentSize = NSSize(width: 680, height: 420)
 
     private var modelManager: ModelManager?
+    private var speechRecognitionSettings: SpeechRecognitionSettings?
+    private var parakeetModelManager: ParakeetModelManager?
     private var downloadCoordinator: ModelDownloadCoordinator?
 
     private init() {
@@ -24,8 +26,14 @@ final class SettingsWindowController: NSWindowController {
         super.init(coder: coder)
     }
 
-    func show(modelManager: ModelManager) {
+    func show(
+        modelManager: ModelManager,
+        speechRecognitionSettings: SpeechRecognitionSettings,
+        parakeetModelManager: ParakeetModelManager
+    ) {
         self.modelManager = modelManager
+        self.speechRecognitionSettings = speechRecognitionSettings
+        self.parakeetModelManager = parakeetModelManager
         if downloadCoordinator?.modelManager !== modelManager {
             downloadCoordinator = ModelDownloadCoordinator(modelManager: modelManager)
         }
@@ -35,7 +43,9 @@ final class SettingsWindowController: NSWindowController {
             window.contentViewController = NSHostingController(
                 rootView: SettingsView(
                     modelManager: modelManager,
-                    downloadCoordinator: downloadCoordinator
+                    downloadCoordinator: downloadCoordinator,
+                    speechRecognitionSettings: speechRecognitionSettings,
+                    parakeetModelManager: parakeetModelManager
                 )
             )
             resetWindowGeometry(window)
@@ -58,7 +68,9 @@ final class SettingsWindowController: NSWindowController {
             settingsWindow.contentViewController = NSHostingController(
                 rootView: SettingsView(
                     modelManager: modelManager,
-                    downloadCoordinator: downloadCoordinator
+                    downloadCoordinator: downloadCoordinator,
+                    speechRecognitionSettings: speechRecognitionSettings,
+                    parakeetModelManager: parakeetModelManager
                 )
             )
             self.window = settingsWindow
@@ -69,8 +81,14 @@ final class SettingsWindowController: NSWindowController {
     }
 
     func show() {
-        guard let modelManager else { return }
-        show(modelManager: modelManager)
+        guard let modelManager,
+              let speechRecognitionSettings,
+              let parakeetModelManager else { return }
+        show(
+            modelManager: modelManager,
+            speechRecognitionSettings: speechRecognitionSettings,
+            parakeetModelManager: parakeetModelManager
+        )
     }
 
     private func resetWindowGeometry(_ window: NSWindow) {

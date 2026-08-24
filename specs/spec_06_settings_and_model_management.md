@@ -1,4 +1,4 @@
-# SPEC 06 — Settings Window and WhisperKit Model Management UI
+# SPEC 06 — Settings Window and Speech Model Management UI
 
 ## Status and dependency
 
@@ -207,3 +207,21 @@ The historical specification expected an implicit `NavigationSplitView` list sel
 ## Completion gate
 
 Do not begin Specification 07 until all Settings tests pass, all four panes are manually verified, Claude key/model configuration and model refresh are checked with a user-owned key, model download/validation/load/detection works on a real model, progress survives tab navigation, and the core pipeline remains operational after changing settings or the active model.
+
+
+## 11. Speech-engine selection and Parakeet model controls
+
+The Models pane also exposes a **Speech recognition** picker backed by `SpeechRecognitionSettings`. The persisted choices are `WhisperKit` (default) and `Parakeet TDT v3`. Changing this setting updates the shared `SpeechTranscriptionRouter`; it does not alter the existing Claude/ChatGPT AI-provider setting.
+
+When Parakeet is selected, the pane shows whether the official FluidAudio Parakeet TDT 0.6B v3 Core ML bundle is installed locally. If it is not installed, **Download** invokes `ParakeetModelManager`, reports progress, validates the required FluidAudio artifacts and vocabulary, and leaves the model uninstalled on failure. The Parakeet path is separate from the WhisperKit catalog and is not represented as a `WhisperModel` row. The current Parakeet cache is app-owned and rooted below `Application Support/dha-aa.voiceflow/fluidaudio/parakeet-tdt-0.6b-v3-coreml`.
+
+Parakeet model loading and inference are owned by `ParakeetTranscriptionEngine`, not by the SwiftUI view. The router preloads the selected engine and `RecordingCoordinator` waits for the selected engine’s readiness before starting the microphone. Selecting WhisperKit continues to use `ModelManager`, the existing WhisperKit catalog, and the long-lived WhisperKit download coordinator. Selecting Parakeet never silently uses a WhisperKit model.
+
+The Parakeet v3 implementation is local batch transcription over the finalized recording file. The UI and documentation must not describe it as live streaming. Unsupported Intel Macs, incomplete artifacts, or FluidAudio load errors display an actionable error and leave the WhisperKit option available. No remote speech request is made by either engine.
+
+Manual Settings acceptance additions:
+
+- The Speech recognition picker persists its selection after reopening Settings.
+- Switching to Parakeet shows the installed/not-installed state and download progress without changing WhisperKit catalog state.
+- A valid Parakeet model can be loaded before recording; a missing or invalid model cannot produce a false-ready state.
+- Switching back to WhisperKit restores the existing selected Whisper model and preload behavior.

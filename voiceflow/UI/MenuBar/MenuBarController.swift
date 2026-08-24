@@ -12,14 +12,23 @@ final class MenuBarController {
     private var popover: NSPopover?
     private let stateManager: AppStateManager
     private let modelManager: ModelManager
+    private let speechRecognitionSettings: SpeechRecognitionSettings
+    private let parakeetModelManager: ParakeetModelManager
     private var stateTimer: Timer?
     private var animationTimer: Timer?
     private var lastState: AppState?
     private var animationFrame = false
 
-    init(stateManager: AppStateManager, modelManager: ModelManager) {
+    init(
+        stateManager: AppStateManager,
+        modelManager: ModelManager,
+        speechRecognitionSettings: SpeechRecognitionSettings,
+        parakeetModelManager: ParakeetModelManager
+    ) {
         self.stateManager = stateManager
         self.modelManager = modelManager
+        self.speechRecognitionSettings = speechRecognitionSettings
+        self.parakeetModelManager = parakeetModelManager
         setupStatusItem()
         setupPopover()
         startStateObservation()
@@ -48,7 +57,9 @@ final class MenuBarController {
         popover?.contentViewController = NSHostingController(
             rootView: MenuBarPopoverView(
                 stateManager: stateManager,
-                modelManager: modelManager
+                modelManager: modelManager,
+                speechRecognitionSettings: speechRecognitionSettings,
+                parakeetModelManager: parakeetModelManager
             )
         )
     }

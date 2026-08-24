@@ -35,6 +35,8 @@ struct SettingsView: View {
 
     let modelManager: ModelManager
     let downloadCoordinator: ModelDownloadCoordinator
+    let speechRecognitionSettings: SpeechRecognitionSettings
+    let parakeetModelManager: ParakeetModelManager
     @State private var selection: Destination = .general
 
     var body: some View {
@@ -77,10 +79,12 @@ struct SettingsView: View {
         case .ai:
             AISettingsView()
         case .models:
-                    ModelsSettingsView(
-                        modelManager: modelManager,
-                        downloadCoordinator: downloadCoordinator
-                    )
+            ModelsSettingsView(
+                modelManager: modelManager,
+                downloadCoordinator: downloadCoordinator,
+                speechRecognitionSettings: speechRecognitionSettings,
+                parakeetModelManager: parakeetModelManager
+            )
 
         case .about:
             AboutSettingsView()

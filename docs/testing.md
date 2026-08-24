@@ -12,7 +12,7 @@ Testing requires a Mac with macOS 14 or later and the full Xcode installation. T
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 ```
 
-The current automated baseline is **131 XCTest tests with zero failures**. Tests that require microphone, Accessibility, a live WhisperKit model, or another application are supplemented by manual verification rather than being made dependent on a particular user machine.
+The current automated baseline is **137 XCTest tests with zero failures**. Tests that require microphone, Accessibility, a live WhisperKit model, or another application are supplemented by manual verification rather than being made dependent on a particular user machine.
 
 ## Automated XCTest suite
 
@@ -35,7 +35,7 @@ xcodebuild \
 A successful run ends with output similar to:
 
 ```text
-Executed 131 tests, with 0 failures
+Executed 137 tests, with 0 failures
 ** TEST SUCCEEDED **
 ```
 
@@ -84,8 +84,8 @@ xcodebuild \
 | Audio recording | Permission handling, start/stop behavior, no-audio handling, recorder failures, and deterministic test doubles. |
 | Recording pipeline | Fn hold/release state changes, recorded-file creation, mono 16 kHz WAV-compatible output, model-readiness gating, and transition into processing. |
 | Application state | Valid and invalid state transitions, completion timing, and safe error recovery. |
-| WhisperKit integration | Package import and session-factory behavior using test doubles; model loading, caching, selection changes, missing models, and transcription error mapping. |
-| Model management | Catalog entries, canonical local paths, direct Hub layout, component validation, nested-folder rejection, download progress, failed-load cleanup, persisted selection, and active-model deletion protection. |
+| Local speech engines | WhisperKit package import and session-factory behavior; Parakeet/FluidAudio session loading through test doubles; engine routing, persisted selection, model readiness, caching, switching, missing models, and transcription error mapping. |
+| Model management | WhisperKit catalog entries, canonical local paths, direct Hub layout, component validation, nested-folder rejection, download progress, failed-load cleanup, persisted selection, active-model deletion protection, and Parakeet local-cache/platform status. |
 | Text processing | Conservative whitespace and formatting behavior without changing dictated meaning. |
 | Text injection | Empty input, missing target, Accessibility failure, keyboard fallback behavior, and injector error mapping. |
 | Injection coordination | Processing/injecting/completed transitions, successful completion sound selection, disabled sound behavior, and no sound on failures. |
@@ -113,7 +113,7 @@ xcodebuild \
   CODE_SIGNING_ALLOWED=NO
 ```
 
-Useful focused groups include `AudioRecorderTests`, `RecordingCoordinatorTests`, `RecordingPipelineIntegrationTests`, `TranscriptionEngineTests`, `ModelManagerTests`, `TextInjectorTests`, `InjectionCoordinatorTests`, `RecordingOverlayViewTests`, and `SettingsTests`. Run the complete suite before merging.
+Useful focused groups include `AudioRecorderTests`, `RecordingCoordinatorTests`, `RecordingPipelineIntegrationTests`, `TranscriptionEngineTests`, `ParakeetTranscriptionEngineTests`, `SpeechTranscriptionRouterTests`, `ModelManagerTests`, `TextInjectorTests`, `InjectionCoordinatorTests`, `RecordingOverlayViewTests`, and `SettingsTests`. Run the complete suite before merging.
 
 ## Static and build checks
 
@@ -225,3 +225,12 @@ For a signed distribution, additionally verify the signature, notarization ticke
 ## Failure-reporting checklist
 
 When reporting a failure, include the macOS version, Xcode version, VoiceFlow commit, selected model identifier, target application, permission state, operation stage, and the relevant error category. Do not include audio, transcription text, inserted text, clipboard contents, private paths that reveal sensitive information, or secret values.
+
+
+### Parakeet TDT v3 manual verification
+
+Parakeet TDT 0.6B v3 is a separate local batch engine backed by FluidAudio 0.15.6 and the official `FluidInference/parakeet-tdt-0.6b-v3-coreml` Core ML model. It requires an Apple Silicon Mac. The automated suite uses fake model providers and session factories; it does not download model weights or claim real Parakeet recognition quality.
+
+On an Apple Silicon test Mac, open **Settings → Models**, choose **Parakeet TDT v3**, and download the official model. Confirm the Parakeet status remains separate from the WhisperKit catalog, that progress and errors are visible, and that the model is not shown ready until structural validation and FluidAudio loading succeed. Launch or wait for preload, then use a disposable TextEdit document, hold Fn, speak a short non-sensitive sentence, and release Fn. Confirm the normal `Listening → Processing → injection → Done` flow and that no network speech request occurs.
+
+Switch back to **WhisperKit** and verify that the prior WhisperKit model selection and cached session remain independent of the Parakeet model. On an Intel Mac or when Parakeet artifacts are absent, verify that VoiceFlow reports an actionable unsupported/not-installed state and does not crash or silently substitute WhisperKit. Do not describe Parakeet v3 as streaming; FluidAudio’s streaming managers and models are outside this integration.

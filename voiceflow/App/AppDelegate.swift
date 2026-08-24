@@ -14,12 +14,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuBarController: MenuBarController?
     private var recordingCoordinator: RecordingCoordinator?
     private var modelManager: ModelManager?
+    private var speechRecognitionSettings: SpeechRecognitionSettings?
+    private var parakeetModelManager: ParakeetModelManager?
     private var transcriptionCoordinator: TranscriptionCoordinator?
     private var injectionCoordinator: InjectionCoordinator?
     private var overlayWindowController: OverlayWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let modelManager = ModelManager()
+        let speechRecognitionSettings = SpeechRecognitionSettings()
+        let parakeetModelManager = ParakeetModelManager()
         VoiceFlowLog.model.info(
             "application_identity bundle_identifier=\(Bundle.main.bundleIdentifier ?? "<missing>", privacy: .public) application_support_directory=\(modelManager.downloadBase.deletingLastPathComponent().path, privacy: .public) models_root_directory=\(modelManager.downloadBase.path, privacy: .public)"
         )
@@ -39,10 +43,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menuBarController = MenuBarController(
             stateManager: stateManager,
-            modelManager: modelManager
+            modelManager: modelManager,
+            speechRecognitionSettings: speechRecognitionSettings,
+            parakeetModelManager: parakeetModelManager
         )
-        let transcriptionEngine = TranscriptionEngine(modelManager: modelManager)
-        modelManager.modelLoadValidator = transcriptionEngine
+        let whisperKitEngine = TranscriptionEngine(modelManager: modelManager)
+        let parakeetEngine = ParakeetTranscriptionEngine(modelManager: parakeetModelManager)
+        let transcriptionEngine = SpeechTranscriptionRouter(
+            settings: speechRecognitionSettings,
+            whisperKitEngine: whisperKitEngine,
+            parakeetEngine: parakeetEngine
+        )
+        modelManager.modelLoadValidator = whisperKitEngine
         modelManager.onModelSelectionChanged = { [weak transcriptionEngine] _ in
             transcriptionEngine?.modelSelectionDidChange()
         }
@@ -94,6 +106,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         self.modelManager = modelManager
+        self.speechRecognitionSettings = speechRecognitionSettings
+        self.parakeetModelManager = parakeetModelManager
         self.transcriptionCoordinator = transcriptionCoordinator
         self.injectionCoordinator = injectionCoordinator
         self.recordingCoordinator = recordingCoordinator
@@ -105,6 +119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor [weak modelManager, weak transcriptionEngine] in
             do {
                 try await modelManager?.refreshModels()
+                parakeetModelManager.refresh()
                 transcriptionEngine?.preloadSelectedModel()
             } catch {
                 VoiceFlowLog.model.error("model_catalog_refresh_failed error=\(String(describing: error), privacy: .public)")
@@ -119,6 +134,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         transcriptionCoordinator = nil
         injectionCoordinator = nil
         modelManager = nil
+        speechRecognitionSettings = nil
+        parakeetModelManager = nil
         overlayWindowController = nil
     }
 

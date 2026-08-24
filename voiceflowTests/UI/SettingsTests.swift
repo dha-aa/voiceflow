@@ -25,7 +25,9 @@ final class SettingsNavigationTests: XCTestCase {
         )
         _ = SettingsView(
             modelManager: manager,
-            downloadCoordinator: ModelDownloadCoordinator(modelManager: manager)
+            downloadCoordinator: ModelDownloadCoordinator(modelManager: manager),
+            speechRecognitionSettings: SpeechRecognitionSettings(userDefaults: UserDefaults(suiteName: "settings-engine-\(UUID().uuidString)")!),
+            parakeetModelManager: ParakeetModelManager()
         )
         XCTAssertTrue(true)
     }
@@ -140,7 +142,9 @@ final class ModelsSettingsViewTests: XCTestCase {
         XCTAssertTrue(manager.availableModels.first { $0.id == "base.en" }?.isDownloaded == false)
         _ = ModelsSettingsView(
             modelManager: manager,
-            downloadCoordinator: ModelDownloadCoordinator(modelManager: manager)
+            downloadCoordinator: ModelDownloadCoordinator(modelManager: manager),
+            speechRecognitionSettings: SpeechRecognitionSettings(userDefaults: UserDefaults(suiteName: "models-engine-\(UUID().uuidString)")!),
+            parakeetModelManager: ParakeetModelManager()
         )
     }
 
@@ -197,7 +201,9 @@ final class ModelsSettingsViewTests: XCTestCase {
 
         _ = ModelsSettingsView(
             modelManager: manager,
-            downloadCoordinator: coordinator
+            downloadCoordinator: coordinator,
+            speechRecognitionSettings: SpeechRecognitionSettings(userDefaults: UserDefaults(suiteName: "models-download-engine-\(UUID().uuidString)")!),
+            parakeetModelManager: ParakeetModelManager()
         )
         XCTAssertEqual(coordinator.activeModelID, "base")
         XCTAssertTrue(coordinator.isDownloading)

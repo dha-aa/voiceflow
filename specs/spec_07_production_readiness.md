@@ -39,8 +39,8 @@ The goal is not to claim that an unsigned artifact has the trust properties of a
 | Hardened Runtime | Enabled for Release configuration |
 | Entitlements | Non-sandboxed app plus `com.apple.security.device.audio-input = true` |
 | App identity | `LSUIElement = true`, no Dock icon, menu-bar agent |
-| Local inference | WhisperKit 0.18.0, model files under app-owned Application Support storage |
-| Tests | 131 XCTest methods in the current test target after selection-aware request and context-suppression coverage |
+| Local inference | WhisperKit 0.18.0 and FluidAudio 0.15.6, with engine-specific model files under app-owned Application Support storage |
+| Tests | 137 XCTest methods in the current test target after Parakeet engine and router coverage |
 | Privacy | No audio, spoken text, transcript, prompt, response, or injected content in logs; optional Claude requests are explicit and text-only |
 | Protected branch | `main` requires pull requests, approval, and the `CI Quality Gate` status check |
 
@@ -219,7 +219,7 @@ This guidance does not bypass macOS security silently and does not claim that th
 
 ## 11. Tests and final verification
 
-The current repository contains 131 XCTest methods distributed across state, audio, transcription, injection, overlay, Settings, LLM, onboarding, package-import, and baseline tests. The complete test target is the primary regression gate. [22]
+The current repository contains 137 XCTest methods distributed across state, audio, transcription, injection, overlay, Settings, LLM, onboarding, package-import, and baseline tests. The complete test target is the primary regression gate. [22]
 
 Final verification must include:
 
@@ -329,3 +329,22 @@ The historical specification also used a placeholder bundle identifier and an ol
 ## Completion gate
 
 Specification 07 is complete when the automated CI/build/test checks and the selected distribution-mode verification pass, all known current limitations are documented, and no release or security claim exceeds what the actual artifact and available credentials prove.
+
+
+## 15. Multi-engine local inference baseline
+
+The production transcription boundary is `SpeechTranscriptionEngine`, implemented by the existing WhisperKit `TranscriptionEngine` and the new `ParakeetTranscriptionEngine`. `SpeechTranscriptionRouter` selects the persisted engine from `SpeechRecognitionSettings`, preloads that engine, and supplies the same readiness contract to `RecordingCoordinator`. The outer pipeline must not assume WhisperKit-specific model IDs or silently substitute one engine for another.
+
+The Parakeet implementation uses FluidAudio `0.15.6` and the official `FluidInference/parakeet-tdt-0.6b-v3-coreml` Core ML model. It requires Apple Silicon, validates the model artifacts and vocabulary locally, loads an `AsrManager` once, and creates a fresh `TdtDecoderState` for each finalized audio file. Parakeet v3 is a local batch path; it is not a claim of live streaming. The separate FluidAudio streaming APIs/models are outside this release.
+
+The app-owned Parakeet model path is separate from the WhisperKit catalog. A missing model, unsupported Intel host, invalid artifact, or FluidAudio load/runtime error maps to the shared transcription error path and must never crash the app or mark the model ready. WhisperKit remains independently selectable and operational. Normal recording, audio files, and inference remain on-device for both engines; no speech-to-text network request is introduced.
+
+The release baseline must include the FluidAudio package pin in `Package.resolved`, a successful unsigned app build with FluidAudio linked, and deterministic tests that cover router selection, persisted engine choice, Parakeet session reuse, model readiness, and error mapping without downloading model weights or sending audio to a remote endpoint. Live Parakeet inference and performance measurements require a separate Apple Silicon manual verification with the official model installed.
+
+Update to the verification checklist:
+
+- Confirm the Speech recognition picker persists WhisperKit and Parakeet choices.
+- On Apple Silicon, download or import the official Parakeet v3 artifacts, verify local validation and preload, and run a controlled microphone/TextEdit transcription.
+- Confirm Parakeet v3 is not described or tested as live streaming.
+- Confirm switching back to WhisperKit does not reuse or mutate the Parakeet session or model directory.
+- On Intel or without Parakeet artifacts, verify actionable failure and continued WhisperKit availability.

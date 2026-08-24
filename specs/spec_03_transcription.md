@@ -1,4 +1,4 @@
-# SPEC 03 — WhisperKit Models and Local Transcription
+# SPEC 03 — Local Speech Models and Transcription
 
 ## Status and dependency
 
@@ -284,3 +284,23 @@ The historical specification described the old snapshot-cache path and treated d
 ## 12. Completion gate
 
 Do not begin Specification 04 until canonical model discovery, download validation, exact-folder loading, preload/cache behavior, transcription error mapping, and coordinator tests pass. A controlled local transcription verification must also confirm that a valid fixture reaches the processed-text callback.
+
+
+## 10. Multi-engine local transcription
+
+The local speech-to-text boundary is `SpeechTranscriptionEngine`, which exposes `prepare()`, `waitUntilReady()`, `preloadSelectedModel()`, `modelSelectionDidChange()`, and `transcribe(audioURL:)`. `TranscriptionCoordinator` depends on this contract rather than on WhisperKit directly, so the outer recording, processing, AI-routing, and injection pipeline is reusable across local engines.
+
+`TranscriptionEngine` remains the WhisperKit implementation and keeps its existing model discovery, validation, cached-session reuse, custom-model support, preload, and error semantics. `ParakeetTranscriptionEngine` is a separate FluidAudio-backed implementation for the official Parakeet TDT 0.6B v3 Core ML model. The active implementation uses FluidAudio `0.15.6`, `AsrModels`, `AsrManager`, and a fresh `TdtDecoderState` per utterance.
+
+Parakeet v3 is integrated as local batch transcription over VoiceFlow’s finalized audio file. It is not described as true live streaming: FluidAudio’s streaming APIs and models are separate products. Parakeet model files are managed under the app-owned FluidAudio cache path and are loaded once, reused for later utterances, and invalidated when the selected engine changes. Model readiness is still awaited before recording starts.
+
+`SpeechRecognitionSettings` persists the selected engine (`WhisperKit` by default or `Parakeet TDT v3`) in `UserDefaults`. Only the Parakeet v3 model is registered for the new engine. No LLM, remote speech service, microphone upload, or automatic migration of existing WhisperKit model folders is part of this change. On unsupported Intel Macs, missing/incomplete Parakeet files, or model-load failure, the common transcription error path reports failure and leaves WhisperKit available.
+
+Acceptance criteria:
+
+- Existing WhisperKit model selection, preload, caching, custom-model loading, and tests remain functional.
+- Selecting Parakeet uses only the FluidAudio model directory and never falls back to a WhisperKit model silently.
+- Parakeet is marked usable only when its required v3 Core ML artifacts and vocabulary are present and its FluidAudio session can load.
+- A missing or unsupported Parakeet installation produces an actionable model error rather than a crash or a false-ready state.
+- Both engines return normalized non-empty text through the same `TranscriptionCoordinator` contract and preserve downstream Grammar Fix, AI-prefix, and text-injection behavior.
+- Normal audio remains on-device; FluidAudio performs local Core ML inference only.
