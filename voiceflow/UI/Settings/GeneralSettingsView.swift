@@ -3,6 +3,7 @@
 //  VoiceFlow
 //
 
+import AppKit
 import ServiceManagement
 import SwiftUI
 
@@ -25,11 +26,19 @@ enum VoiceFlowSettingsDefaults {
     }
 }
 
+@MainActor
 struct GeneralSettingsView: View {
     @AppStorage(VoiceFlowSettingsDefaults.showRecordingOverlayKey) private var showRecordingOverlay = true
     @AppStorage(VoiceFlowSettingsDefaults.playCompletionSoundKey) private var playCompletionSound = false
     @AppStorage(VoiceFlowSettingsDefaults.completionSoundEffectKey) private var completionSoundEffect = CompletionSoundEffect.tink.rawValue
     @State private var launchAtLoginError: String?
+    @State private var permissionStatuses: [VoiceFlowPermission: VoiceFlowPermissionStatus] = [:]
+    @State private var requestingPermission: VoiceFlowPermission?
+    private let permissionManager: VoiceFlowPermissionManaging
+
+    init(permissionManager: VoiceFlowPermissionManaging? = nil) {
+        self.permissionManager = permissionManager ?? SystemVoiceFlowPermissionManager()
+    }
 
     var body: some View {
         Form {
@@ -83,12 +92,70 @@ struct GeneralSettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("Permissions") {
+                permissionRow(.microphone)
+                permissionRow(.accessibility)
+                Text("Screen Recording is not required in this version because screen-context AI is not available yet.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
         }
         .formStyle(.grouped)
         .toggleStyle(.switch)
         .padding(24)
         .navigationTitle("General")
+        .onAppear {
+            refreshPermissionStatuses()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refreshPermissionStatuses()
+        }
 
+    }
+
+    @ViewBuilder
+    private func permissionRow(_ permission: VoiceFlowPermission) -> some View {
+        let status = permissionStatuses[permission] ?? .notGranted
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Label(permission.title, systemImage: permission.systemImage)
+                Spacer()
+                Label(status.title, systemImage: status.isGranted ? "checkmark.circle.fill" : "exclamationmark.circle")
+                    .foregroundStyle(status.isGranted ? .green : .secondary)
+                    .font(.callout)
+            }
+            Text(permission.featureDescription)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if !status.isGranted {
+                HStack {
+                    Button(requestingPermission == permission ? "Requesting…" : "Grant Permission") {
+                        Task { await requestPermission(permission) }
+                    }
+                    .disabled(requestingPermission != nil)
+
+                    Button("Open System Settings") {
+                        permissionManager.openSystemSettings(for: permission)
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
+        }
+    }
+
+    private func refreshPermissionStatuses() {
+        for permission in VoiceFlowPermission.allCases {
+            permissionStatuses[permission] = permissionManager.status(for: permission)
+        }
+    }
+
+    private func requestPermission(_ permission: VoiceFlowPermission) async {
+        guard requestingPermission == nil else { return }
+        requestingPermission = permission
+        _ = await permissionManager.request(permission)
+        requestingPermission = nil
+        refreshPermissionStatuses()
     }
 
     private var isLaunchAtLoginEnabled: Bool {

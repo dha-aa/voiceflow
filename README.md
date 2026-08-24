@@ -24,7 +24,7 @@ VoiceFlow is a privacy-first native macOS menu-bar dictation application. Hold *
 | Recording overlay | A compact floating HUD communicates Loading model, Listening, Processing, `Using Claude...` or `Using ChatGPT...` for AI requests, Done, and error states. |
 | Menu-bar status | The menu-bar icon reflects idle, recording, processing, completion, and error states. The idle identity mark is a native template image for Light and Dark Mode contrast. |
 | Completion feedback | General settings can enable a short completion sound and select Tink, Pop, or Glass. It is disabled by default and only plays after successful injection. |
-| Settings | General, AI, Models, and About sections are available from the menu-bar application. |
+| Settings | General, AI, Models, and About sections are available from the menu-bar application, with permission recovery in General. |
 | Privacy-safe diagnostics | Structured logs contain lifecycle metadata such as model identifiers, paths, durations, byte counts, and error categories—not audio, prompts, responses, transcripts, or inserted text. |
 
 ## Expected interaction
@@ -61,7 +61,7 @@ cd voiceflow
 open voiceflow.xcodeproj
 ```
 
-Select the `voiceflow` scheme and run the app from Xcode. VoiceFlow appears as a menu-bar application rather than a normal Dock application. Grant microphone access in **System Settings → Privacy & Security → Microphone**. Grant Accessibility or Input Monitoring access in **System Settings → Privacy & Security** when the app requests it or when text injection is blocked.
+Select the `voiceflow` scheme and run the app from Xcode. VoiceFlow appears as a menu-bar application rather than a normal Dock application. On the first launch, the onboarding window explains the workflow and presents Microphone and Accessibility permissions one at a time before asking macOS to display each system prompt. Screen Recording is explained as a future screen-context capability and is not requested by the current version. If a permission is skipped or denied, VoiceFlow remains usable where possible; unresolved permissions can later be requested or opened in **Settings → General → Permissions**.
 
 Open the menu-bar popover and go to **Settings → Models**. Select an installed model, download one, or use **Import Model** to choose a local WhisperKit Core ML model folder such as `Oriserve_Whisper-Hindi2Hinglish-Prime_889MB` from Finder. VoiceFlow validates the imported folder, verifies it can load through WhisperKit, and copies it into the managed model directory before showing it as installed. VoiceFlow stores its canonical model root under:
 
@@ -81,8 +81,10 @@ WhisperKit’s downloaded repository layout is nested below that root under `mod
 | `voiceflow/Core/Injection/` | Focused-app capture, Accessibility insertion, keyboard-event fallback, and completion feedback. |
 | `voiceflow/Core/State/` | Explicit application states and state transitions. |
 | `voiceflow/Core/Logging/` | Privacy-safe structured logging. |
+| `voiceflow/Core/Permissions/` | Microphone, Accessibility, and future screen-context permission status and requests. |
 | `voiceflow/UI/MenuBar/` | Menu-bar item, template icon behavior, and popover presentation. |
 | `voiceflow/UI/Overlay/` | Recording HUD, state mapping, animation, and waveform display. |
+| `voiceflow/UI/Onboarding/` | First-launch welcome, sequential permissions, skip/denial handling, and setup completion. |
 | `voiceflow/UI/Settings/` | General, AI, Models, About, download coordination, and Settings window behavior. |
 | `voiceflowTests/` | Unit, integration, model lifecycle, injection, overlay, and settings regression tests. |
 | `specs/` | Product and implementation specifications for the completed work. |
@@ -93,7 +95,7 @@ WhisperKit’s downloaded repository layout is nested below that root under `mod
 
 ## Privacy and security model
 
-VoiceFlow’s normal recording-to-injection path is local. Network access is used for model catalog and model downloads, not for sending captured audio for remote transcription. An explicit, user-enabled Claude command is the only exception for dictated text: when enabled and the transcript begins with `Claude`, only the command remainder is sent to Anthropic. Do not add telemetry, remote transcription, or transcript-bearing diagnostics without a separate privacy review.
+VoiceFlow’s normal recording-to-injection path is local. Network access is used for model catalog and model downloads, not for sending captured audio for remote transcription. An explicit, user-enabled Claude command is the only exception for dictated text: when enabled and the transcript begins with the configured custom prefix, only the command remainder is sent to Anthropic. Do not add telemetry, remote transcription, or transcript-bearing diagnostics without a separate privacy review.
 
 Logs must remain metadata-only. Safe examples include model IDs, model paths, audio file identifiers, file sizes, durations, state names, process identifiers, and error categories. Do not log microphone samples, audio contents, raw transcripts, inserted text, clipboard contents, or secret environment variables.
 
@@ -123,7 +125,7 @@ xcodebuild \
   CODE_SIGNING_ALLOWED=NO
 ```
 
-The current suite contains **118 tests** covering the recording stage, pipeline coordination, model management, transcription session behavior, text injection, overlay state, provider-aware overlay status, AI provider/model persistence, custom-prefix routing, Claude model-list decoding, and related regressions. See [`docs/testing.md`](docs/testing.md) for the full verification matrix.
+The current suite contains **123 tests** covering the recording stage, pipeline coordination, model management, transcription session behavior, text injection, overlay state, provider-aware overlay status, onboarding permission flow, AI provider/model persistence, custom-prefix routing, Claude model-list decoding, and related regressions. See [`docs/testing.md`](docs/testing.md) for the full verification matrix.
 
 Build a local unsigned app bundle into `build/` with the convenience script:
 

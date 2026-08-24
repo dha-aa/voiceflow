@@ -40,7 +40,7 @@ The goal is not to claim that an unsigned artifact has the trust properties of a
 | Entitlements | Non-sandboxed app plus `com.apple.security.device.audio-input = true` |
 | App identity | `LSUIElement = true`, no Dock icon, menu-bar agent |
 | Local inference | WhisperKit 0.18.0, model files under app-owned Application Support storage |
-| Tests | 118 XCTest methods in the current test target after provider-aware overlay coverage |
+| Tests | 123 XCTest methods in the current test target after first-launch onboarding coverage |
 | Privacy | No audio, spoken text, transcript, prompt, response, or injected content in logs; optional Claude requests are explicit and text-only |
 | Protected branch | `main` requires pull requests, approval, and the `CI Quality Gate` status check |
 
@@ -60,6 +60,16 @@ A model is installed only when the canonical direct Hub directory passes structu
 
 If a model disappears between preload and transcription, the engine resolves the folder again and reports `.modelNotInstalled` rather than attempting an implicit download. Heavy-memory-pressure retry logic is not currently implemented; a load failure maps to `.modelFailedToLoad` and returns the app to safe error recovery.
 
+### First-launch onboarding and permissions
+
+`OnboardingWindowController` presents `OnboardingView` on the first launch when `hasCompletedOnboarding` is not set. The welcome screen explains the hold Fn → speak → release workflow before any onboarding permission request. Microphone and Accessibility are presented one at a time with an explanation of why each permission is needed, the feature it enables, and a clear **Grant Permission** action.
+
+The onboarding flow handles permissions independently. A denial does not terminate VoiceFlow or mark the permission as granted. The user can check again, continue without that capability, or skip setup. The completion screen explains which features remain unavailable and directs the user to **Settings → General → Permissions**. Completing or skipping setup persists `hasCompletedOnboarding` so the onboarding does not appear on every launch.
+
+Screen Recording is currently informational only. VoiceFlow does not request it because screen-context AI is not implemented in this version; the onboarding and General Settings UI must say so explicitly rather than presenting a misleading system prompt.
+
+`SystemVoiceFlowPermissionManager` is the single system-permission adapter. Microphone status/request uses AVFoundation authorization, Accessibility status/request uses ApplicationServices trust APIs, and the recovery UI can open the corresponding macOS Privacy & Security pane. Onboarding and Settings use this adapter rather than duplicating permission checks.
+
 ### Transcription
 
 The transcription coordinator accepts work only while the shared state is `.processing`. Missing files, missing models, load failures, empty output, and runtime failures map to the documented shared errors. `TextProcessor` removes only known `[BLANK_AUDIO]`/`(inaudible)` artifacts and normalizes whitespace; it does not paraphrase or rewrite. When Claude commands are enabled, Claude is selected, and the processed transcript begins with the persisted custom prefix, only the remaining text is sent to Anthropic over HTTPS; the returned text replaces the local transcript before injection. Matching is case-insensitive and rejects an embedded prefix inside another word. Normal dictation remains local.
@@ -74,7 +84,7 @@ Successful injection transitions through `.completed` and then `.idle` after app
 
 ### Overlay and Settings
 
-The overlay is a non-activating 270×58 pt panel with a 252×48 pt single black capsule, no native panel shadow, and no outer backing/border artifact. `.preparingModel` displays Loading model; `.recording` displays Listening; `.processing` and `.injecting` display Processing; `.completed` displays Done for about 400 ms; errors display a short message. Settings navigation uses explicit buttons, model download progress survives tab changes, active-model deletion is blocked, and the Settings window resets to its intended size when reopened. The Settings window contains General, AI, Models, and About panes. The AI pane persists the selected provider, per-provider model IDs, and custom command prefix; stores Claude credentials only in Keychain; shows a masked Configured state with Change/Remove controls; and lets the user refresh Claude’s model list through the authenticated provider API. ChatGPT is represented as future UI only and has no active request path. [12] [13] [14] [15]
+The overlay is a non-activating 270×58 pt panel with a 252×48 pt single black capsule, no native panel shadow, and no outer backing/border artifact. `.preparingModel` displays Loading model; `.recording` displays Listening; ordinary `.processing` and `.injecting` display Processing; an explicit AI request displays `Using Claude...` or the corresponding provider title before the response completes; `.completed` displays Done for about 400 ms; errors display a short message. Settings navigation uses explicit buttons, model download progress survives tab changes, active-model deletion is blocked, and the Settings window resets to its intended size when reopened. The Settings window contains General, AI, Models, and About panes. The AI pane persists the selected provider, per-provider model IDs, and custom command prefix; stores Claude credentials only in Keychain; shows a masked Configured state with Change/Remove controls; and lets the user refresh Claude’s model list through the authenticated provider API. ChatGPT is represented as future UI only and has no active request path. [12] [13] [14] [15]
 
 ## 4. Privacy and security requirements
 
@@ -209,14 +219,14 @@ This guidance does not bypass macOS security silently and does not claim that th
 
 ## 11. Tests and final verification
 
-The current repository contains 118 XCTest methods distributed across state, audio, transcription, injection, overlay, Settings, LLM, package-import, and baseline tests. The complete test target is the primary regression gate. [22]
+The current repository contains 123 XCTest methods distributed across state, audio, transcription, injection, overlay, Settings, LLM, onboarding, package-import, and baseline tests. The complete test target is the primary regression gate. [22]
 
 Final verification must include:
 
 - All automated XCTest tests pass locally and in CI.
 - Debug build and Release unsigned build succeed with signing disabled.
 - Project metadata, plist/entitlements, workflow YAML, shell syntax, and credential hygiene checks pass.
-- Real hardware verifies microphone permission, Fn hold threshold, model readiness, overlay focus safety, Accessibility injection, Settings persistence, model download validation, completion sound behavior, and Light/Dark menu-bar icon rendering.
+- Real hardware verifies first-launch onboarding, microphone and Accessibility permission prompts, skip/denial recovery, Settings permission controls, Fn hold threshold, model readiness, overlay focus safety, Accessibility injection, Settings persistence, model download validation, completion sound behavior, and Light/Dark menu-bar icon rendering.
 - The core TextEdit pipeline is repeated after any UI or Settings change.
 - The unsigned DMG mounts and passes `hdiutil verify`; its contents include `VoiceFlow.app` and an Applications shortcut.
 - Signed distribution, stapling, and Gatekeeper assessment are verified only when real Apple credentials are available.
@@ -229,6 +239,7 @@ Final verification must include:
 - Branch protection requires the CI check and pull-request approval before normal merging.
 - No dedicated lint/format tool is claimed unless one is actually configured; current repository quality checks remain documented.
 - Privacy-safe logging contains no audio, speech, transcript, Claude prompt, Claude response, API key, or injected text.
+- First-launch onboarding explains the workflow and each current permission before requesting it, allows skip/denial recovery, and exposes unresolved permission recovery in General Settings. Screen Recording is explicitly not requested until screen-context AI exists.
 - Optional Claude processing is disabled by default, uses a Keychain-stored user key, shows only a masked Configured state after saving, sends only the remainder after the persisted custom prefix, uses the configured Claude model, and returns failures to a recoverable state.
 - AI settings persist the selected provider and model. Claude model refresh uses the authenticated Models API; ChatGPT remains explicitly unimplemented and makes no request.
 - Known edge cases are mapped to safe errors or explicitly recorded as current limitations.

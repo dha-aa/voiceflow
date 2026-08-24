@@ -63,8 +63,9 @@ The pane contains these sections:
 - **Startup:** controls `Launch VoiceFlow at Login` through `SMAppService.mainApp.register()` and `.unregister()`. It displays enabled, approval-required, not-registered, or unavailable status and shows registration errors inline.
 - **Feedback:** controls `Play completion sound` and a disabled-until-enabled picker containing `Tink`, `Pop`, and `Glass`. The actual playback remains owned by `InjectionCoordinator` and occurs only after successful injection.
 - **Appearance:** controls `Show recording overlay when recording` and explains that the overlay does not take focus.
+- **Permissions:** shows current Microphone and Accessibility status with **Grant Permission** and **Open System Settings** recovery actions. It explains that Screen Recording is reserved for a future screen-context feature and is not requested by the current version.
 
-Changing the overlay setting takes effect through `UserDefaults.didChangeNotification` without relaunching. Completion sound preferences are read by the injection coordinator and persist across launches.
+Changing the overlay setting takes effect through `UserDefaults.didChangeNotification` without relaunching. Completion sound preferences are read by the injection coordinator and persist across launches. Permission status refreshes when the app becomes active after the user visits System Settings.
 
 ### AI settings
 
@@ -158,6 +159,7 @@ Manual verification must confirm:
 
 - The singleton Settings window opens from the existing popover and does not terminate the app when closed.
 - General, AI, Models, and About are selectable by explicit working controls.
+- First launch presents the welcome and sequential permission onboarding; skipped or denied permissions remain recoverable from General → Permissions.
 - The window reopens at its intended 760×500 content size with the 680×420 minimum.
 - Launch-at-login uses `SMAppService.mainApp` and displays actionable errors.
 - Overlay preference defaults true and persists; completion sound defaults false and persists with Tink/Pop/Glass selection.

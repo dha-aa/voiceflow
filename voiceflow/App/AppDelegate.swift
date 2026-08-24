@@ -98,6 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.overlayWindowController = overlayWindowController
         recordingCoordinator.start()
         overlayWindowController.start()
+        OnboardingWindowController.shared.showIfNeeded()
 
         Task { @MainActor [weak modelManager, weak transcriptionEngine] in
             do {
