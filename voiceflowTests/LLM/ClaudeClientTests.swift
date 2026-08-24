@@ -145,6 +145,47 @@ final class ClaudeClientTests: XCTestCase {
         XCTAssertEqual(client.callCount, 0)
     }
 
+    func test_claudeAdapterForwardsOptionalScreenContextThroughSharedRequest() async throws {
+        let defaults = UserDefaults(suiteName: "claude-screen-context-\(UUID().uuidString)")!
+        defaults.set(true, forKey: ClaudeSettings.enabledKey)
+        let client = TestClaudeAPIClient(response: "Contextual answer")
+        let processor = ClaudeCommandProcessor(
+            apiClient: client,
+            keyStore: TestClaudeAPIKeyStore(apiKey: "test-key"),
+            userDefaults: defaults,
+            screenContextProvider: {
+                AIScreenContext(summary: "The user is viewing a code editor.")
+            }
+        )
+
+        _ = try await processor.processTranscribedText("Claude explain this")
+
+        XCTAssertEqual(
+            client.receivedPrompt,
+            "explain this\n\nScreen context:\nThe user is viewing a code editor."
+        )
+        XCTAssertTrue(client.receivedSystemPrompt?.contains(AIPromptBuilder.screenContext) == true)
+    }
+
+    func test_processorAcceptsProviderNeutralClientContract() async throws {
+        let defaults = UserDefaults(suiteName: "provider-neutral-\(UUID().uuidString)")!
+        defaults.set(true, forKey: ClaudeSettings.grammarFixEnabledKey)
+        let client = TestAIProviderClient(response: "Corrected text")
+        let processor = ClaudeCommandProcessor(
+            providerClient: client,
+            keyStore: TestClaudeAPIKeyStore(apiKey: "test-key"),
+            userDefaults: defaults
+        )
+
+        let result = try await processor.processTranscribedText("i am ready")
+
+        XCTAssertEqual(result, "Corrected text")
+        XCTAssertEqual(client.request?.mode, .grammarFix)
+        XCTAssertEqual(client.request?.text, "i am ready")
+        XCTAssertEqual(client.request?.model, ClaudeSettings.defaultModel)
+        XCTAssertEqual(client.request?.systemPrompt, AIPromptBuilder.grammarFix)
+    }
+
     func test_processorRejectsClaudeCommandWithoutAPIKey() async {
         let defaults = UserDefaults(suiteName: "claude-no-key-\(UUID().uuidString)")!
         defaults.set(true, forKey: ClaudeSettings.enabledKey)
@@ -260,6 +301,21 @@ private final class TestClaudeAPIClient: ClaudeAPIClient {
         receivedAPIKey = apiKey
         receivedModel = model
         receivedSystemPrompt = systemPrompt
+        return response
+    }
+}
+
+private final class TestAIProviderClient: AIProviderClient {
+    let provider: AIProvider = .claude
+    let response: String
+    private(set) var request: AIProcessingRequest?
+
+    init(response: String) {
+        self.response = response
+    }
+
+    func complete(request: AIProcessingRequest, apiKey: String) async throws -> String {
+        self.request = request
         return response
     }
 }

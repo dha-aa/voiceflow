@@ -57,8 +57,8 @@ enum ClaudeSettings {
     static let legacyModelKey = AISettings.legacyClaudeModelKey
     static let defaultModel = AISettings.defaultClaudeModel
 
-    static let commandSystemPrompt = "Return only the final content requested, ready to paste. Preserve the user’s intent. No explanations, filler, or unrequested information. Keep requested code, commands, lists, and line breaks valid."
-    static let grammarCorrectionSystemPrompt = "Correct grammar, spelling, capitalization, punctuation, and obvious transcription errors only. Preserve meaning, wording, tone, and information. Return only the corrected text; no explanations, rewriting, Markdown, quotes, or added content."
+    static let commandSystemPrompt = AIPromptBuilder.command
+    static let grammarCorrectionSystemPrompt = AIPromptBuilder.grammarFix
 
     static func isEnabled(in defaults: UserDefaults = .standard) -> Bool {
         defaults.object(forKey: enabledKey) as? Bool ?? false
@@ -84,18 +84,33 @@ enum ClaudeCommandError: Error {
 }
 
 struct ClaudeCommandProcessor {
-    private let apiClient: ClaudeAPIClient
+    private let providerClient: AIProviderClient
     private let keyStore: ClaudeAPIKeyStore
     private let userDefaults: UserDefaults
+    private let screenContextProvider: () -> AIScreenContext?
 
     init(
         apiClient: ClaudeAPIClient = LiveClaudeAPIClient(),
         keyStore: ClaudeAPIKeyStore = KeychainClaudeAPIKeyStore(),
-        userDefaults: UserDefaults = .standard
+        userDefaults: UserDefaults = .standard,
+        screenContextProvider: @escaping () -> AIScreenContext? = { nil }
     ) {
-        self.apiClient = apiClient
+        self.providerClient = ClaudeAIProviderClient(transport: apiClient)
         self.keyStore = keyStore
         self.userDefaults = userDefaults
+        self.screenContextProvider = screenContextProvider
+    }
+
+    init(
+        providerClient: AIProviderClient,
+        keyStore: ClaudeAPIKeyStore = KeychainClaudeAPIKeyStore(),
+        userDefaults: UserDefaults = .standard,
+        screenContextProvider: @escaping () -> AIScreenContext? = { nil }
+    ) {
+        self.providerClient = providerClient
+        self.keyStore = keyStore
+        self.userDefaults = userDefaults
+        self.screenContextProvider = screenContextProvider
     }
 
     func requestedProvider(for text: String) -> AIProvider? {
@@ -149,11 +164,14 @@ struct ClaudeCommandProcessor {
         let startedAt = Date()
         VoiceFlowLog.llm.info("claude_request_started model_id=\(model, privacy: .public) prompt_character_count=\(command.prompt.count, privacy: .public)")
         do {
-            let response = try await apiClient.complete(
-                prompt: command.prompt,
-                apiKey: apiKey,
-                model: model,
-                systemPrompt: ClaudeSettings.commandSystemPrompt
+            let response = try await providerClient.complete(
+                request: AIProcessingRequest(
+                    text: command.prompt,
+                    mode: .command,
+                    model: model,
+                    screenContext: screenContextProvider()
+                ),
+                apiKey: apiKey
             )
             let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else {
@@ -181,11 +199,14 @@ struct ClaudeCommandProcessor {
         let startedAt = Date()
         VoiceFlowLog.llm.info("claude_grammar_request_started model_id=\(model, privacy: .public) input_character_count=\(normalizedText.count, privacy: .public)")
         do {
-            let response = try await apiClient.complete(
-                prompt: normalizedText,
-                apiKey: apiKey,
-                model: model,
-                systemPrompt: ClaudeSettings.grammarCorrectionSystemPrompt
+            let response = try await providerClient.complete(
+                request: AIProcessingRequest(
+                    text: normalizedText,
+                    mode: .grammarFix,
+                    model: model,
+                    screenContext: screenContextProvider()
+                ),
+                apiKey: apiKey
             )
             let correctedText = response.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !correctedText.isEmpty else {

@@ -32,6 +32,7 @@ The Settings layer must let users:
 | `SettingsView` | `voiceflow/UI/Settings/SettingsView.swift` | Four-destination sidebar and detail routing |
 | `GeneralSettingsView` | `voiceflow/UI/Settings/GeneralSettingsView.swift` | General preferences and launch-at-login |
 | `AISettingsView` | `voiceflow/UI/Settings/AISettingsView.swift` | Provider selection, Claude credentials, model selection, and model refresh |
+| `AIProcessing` | `voiceflow/Core/LLM/AIProcessing.swift` | Provider-neutral request modes, compact prompts, optional screen-context slot, and provider-client contract |
 | `ModelsSettingsView` | `voiceflow/UI/Settings/ModelsSettingsView.swift` | Model catalog, download/import actions, progress, alerts, and Finder access |
 | `ModelDownloadCoordinator` | `voiceflow/UI/Settings/ModelDownloadCoordinator.swift` | Long-lived download task, progress, cancel, and error state |
 | `AboutSettingsView` | `voiceflow/UI/Settings/AboutSettingsView.swift` | Branding, metadata, links, and license |
@@ -76,6 +77,8 @@ Claude API keys are saved only through the provider-neutral `KeychainAPIKeyStore
 A Claude command is eligible for routing only when Claude commands are enabled, Claude is the selected provider, and the locally processed transcript begins with the configured prefix. Matching is case-insensitive and requires a word boundary after the prefix; optional punctuation and whitespace are removed from the remainder. When this route is active, the overlay changes its processing status to `Using Claude...`; a future provider route must use the corresponding provider title. The existing transcription coordinator continues to perform local WhisperKit transcription first, then routes the remaining text through the selected Claude model before handing the final text to injection.
 
 The processor checks the AI prefix before Grammar Fix. The four cases are: a matching prefix with Grammar Fix on routes only the prefix remainder as an AI request; a matching prefix with Grammar Fix off behaves the same; no prefix with Grammar Fix on sends the complete ordinary transcript through Claude’s correction-only system prompt; and no prefix with Grammar Fix off leaves the local processed text unchanged. Grammar Fix must never alter an AI command before command routing.
+
+`AIProcessingRequest` is the provider-neutral request shape. It carries the text, processing mode, selected provider model, and optional `AIScreenContext`. `AIPromptBuilder` supplies reusable command and Grammar Fix system-prompt modes. `AIProviderClient` is the future-provider boundary; Claude currently implements it through `ClaudeAIProviderClient`, while ChatGPT remains disabled UI only. The current app does not capture screen context, but the request slot is ready for a future privacy-reviewed screen-context provider.
 
 ## 5. Models pane
 
@@ -165,7 +168,7 @@ Manual verification must confirm:
 - The window reopens at its intended 760×500 content size with the 680×420 minimum.
 - Launch-at-login uses `SMAppService.mainApp` and displays actionable errors.
 - Overlay preference defaults true and persists; completion sound defaults false and persists with Tink/Pop/Glass selection.
-- The AI pane defaults to Claude, Claude commands default to disabled, Grammar Fix defaults to disabled, Claude uses a Keychain-stored API key with masked Configured/Change/Remove UX, exposes a persisted custom prefix and editable or fetched model choice, and routes only the configured-prefix remainder before any Grammar Fix processing. Ordinary no-prefix speech uses the correction-only Claude path only when Grammar Fix is enabled. The overlay identifies the active provider while the request is in progress. ChatGPT is visibly future work and makes no request.
+- The AI pane defaults to Claude, Claude commands default to disabled, Grammar Fix defaults to disabled, Claude uses a Keychain-stored API key with masked Configured/Change/Remove UX, exposes a persisted custom prefix and editable or fetched model choice, and routes only the configured-prefix remainder before any Grammar Fix processing. Ordinary no-prefix speech uses the correction-only Claude path only when Grammar Fix is enabled. The provider-neutral request and prompt contract carries mode, model, and optional screen context for future providers. The overlay identifies the active provider while the request is in progress. ChatGPT is visibly future work and makes no request.
 - Models are supplied by the live catalog and are not hardcoded in the UI.
 - Only preflight-valid, optionally real-load-validated models appear installed.
 - Download progress and cancellation survive navigation away from the Models pane.
