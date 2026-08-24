@@ -62,7 +62,9 @@ protocol AIModelCatalogClient {
 enum AISettings {
     static let selectedProviderKey = "aiSelectedProvider"
     static let commandsEnabledKey = "claudeCommandsEnabled"
+    static let commandPrefixKey = "aiCommandPrefix"
     static let legacyClaudeModelKey = "claudeModel"
+    static let defaultCommandPrefix = "Claude"
     static let defaultClaudeModel = "claude-sonnet-5"
 
     static func modelKey(for provider: AIProvider) -> String {
@@ -87,6 +89,12 @@ enum AISettings {
         return stored.isEmpty ? defaultModel(for: provider) : stored
     }
 
+    static func commandPrefix(in defaults: UserDefaults = .standard) -> String {
+        let stored = defaults.string(forKey: commandPrefixKey)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return stored.isEmpty ? defaultCommandPrefix : stored
+    }
+
     static func defaultModel(for provider: AIProvider) -> String {
         switch provider {
         case .claude:
@@ -94,6 +102,38 @@ enum AISettings {
         case .chatGPT:
             "gpt-4o-mini"
         }
+    }
+}
+
+struct AICommand {
+    let prompt: String
+
+    static func parse(
+        _ text: String,
+        prefix: String = AISettings.defaultCommandPrefix
+    ) -> AICommand? {
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedPrefix = prefix.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedText.isEmpty,
+              !trimmedPrefix.isEmpty,
+              let prefixRange = trimmedText.range(
+                of: trimmedPrefix,
+                options: [.anchored, .caseInsensitive]
+              ) else {
+            return nil
+        }
+
+        let remainder = trimmedText[prefixRange.upperBound...]
+        if let firstCharacter = remainder.first,
+           !firstCharacter.isWhitespace,
+           !CharacterSet(charactersIn: ",:;.!?-_").contains(firstCharacter.unicodeScalars.first!) {
+            return nil
+        }
+
+        let prompt = remainder.trimmingCharacters(
+            in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ",:;.!?-_"))
+        )
+        return AICommand(prompt: prompt)
     }
 }
 

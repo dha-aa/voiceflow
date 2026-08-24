@@ -70,9 +70,9 @@ Changing the overlay setting takes effect through `UserDefaults.didChangeNotific
 
 `AISettingsView` is the single settings surface for AI provider configuration. `AIProvider` currently contains `claude` and a disabled `chatGPT` future case. The selected provider is persisted in `aiSelectedProvider`, defaulting to Claude. Provider model selections use per-provider keys such as `aiModel.claude`; the prior `claudeModel` key is read as a migration fallback. Claude commands remain disabled by default through `claudeCommandsEnabled`.
 
-Claude API keys are saved only through the provider-neutral `KeychainAPIKeyStore`, using a provider-specific Keychain account (`anthropic-api-key` for Claude). The AI pane never displays the stored secret. Claude’s model can be entered manually or refreshed through the user-triggered **Fetch available models** action, which calls Anthropic’s authenticated `GET /v1/models` endpoint and presents the returned model IDs/display names. The last successful list is kept in view; a refresh failure does not erase the manually selected model. ChatGPT has no active key, model-list request, or generation path yet and must be presented as coming soon rather than as an operational provider.
+Claude API keys are saved only through the provider-neutral `KeychainAPIKeyStore`, using a provider-specific Keychain account (`anthropic-api-key` for Claude). After saving, the AI pane shows a fixed masked value and `Configured` status, with explicit `Change API Key` and `Remove API Key` controls. The stored secret is never displayed or copied into UserDefaults. Claude’s custom command prefix defaults to `Claude`, is persisted in `aiCommandPrefix`, and may be any non-empty word or phrase. Claude’s model can be entered manually or refreshed through the user-triggered **Fetch available models** action, which calls Anthropic’s authenticated `GET /v1/models` endpoint and presents the returned model IDs/display names. The last successful list is kept in view; a refresh failure does not erase the manually selected model. ChatGPT has no active key, model-list request, or generation path yet and must be presented as coming soon rather than as an operational provider.
 
-A Claude command is eligible for routing only when Claude commands are enabled and Claude is the selected provider. The existing transcription coordinator continues to perform local WhisperKit transcription first, then routes an explicit leading `Claude` command through the selected Claude model before handing the final text to injection.
+A Claude command is eligible for routing only when Claude commands are enabled, Claude is the selected provider, and the locally processed transcript begins with the configured prefix. Matching is case-insensitive and requires a word boundary after the prefix; optional punctuation and whitespace are removed from the remainder. The existing transcription coordinator continues to perform local WhisperKit transcription first, then routes the remaining text through the selected Claude model before handing the final text to injection.
 
 ## 5. Models pane
 
@@ -143,14 +143,15 @@ Manual verification must confirm:
 9. Import Model accepts the Oriserve folder, shows import/validation progress, detects the installed model immediately, and rejects invalid or duplicate folders safely.
 10. A successful download or import is validated, load-checked, detected immediately, and reused by transcription.
 11. A failed structural or WhisperKit load validation is not shown as installed.
-12. The AI pane defaults to Claude, Claude commands are disabled by default, the API key is saved only in Keychain, and the Claude model ID is editable.
-13. Fetch available models uses the saved Claude key, updates the available Claude model choices, and leaves the current selection usable when the refresh fails.
-14. A Claude-prefixed transcript sends only the remaining text to Anthropic and injects the returned text; a normal transcript never sends a network request.
-15. Finder opens the canonical app-owned model folder.
-16. Active-model deletion is blocked; inactive deletion requires confirmation.
-17. Selecting a different installed model triggers replacement/preload before the next recording.
-18. About shows correct metadata and links.
-19. The core TextEdit pipeline and overlay remain regression-free.
+12. The AI pane defaults to Claude, Claude commands are disabled by default, the custom prefix defaults to `Claude` and persists, and the Claude model ID is editable.
+13. The API-key UI shows a masked value and `Configured` after saving, and supports `Change API Key` and `Remove API Key` without exposing the secret.
+14. Fetch available models uses the saved Claude key, updates the available Claude model choices, and leaves the current selection usable when the refresh fails.
+15. A transcript beginning with the configured prefix sends only the remaining text to Anthropic and injects the returned text; a normal transcript never sends a network request.
+16. Finder opens the canonical app-owned model folder.
+17. Active-model deletion is blocked; inactive deletion requires confirmation.
+18. Selecting a different installed model triggers replacement/preload before the next recording.
+19. About shows correct metadata and links.
+20. The core TextEdit pipeline and overlay remain regression-free.
 
 ## 9. Acceptance criteria
 
@@ -159,7 +160,7 @@ Manual verification must confirm:
 - The window reopens at its intended 760×500 content size with the 680×420 minimum.
 - Launch-at-login uses `SMAppService.mainApp` and displays actionable errors.
 - Overlay preference defaults true and persists; completion sound defaults false and persists with Tink/Pop/Glass selection.
-- The AI pane defaults to Claude, Claude commands default to disabled, Claude uses a Keychain-stored API key, exposes an editable or fetched model choice, and routes only the explicit `Claude` command remainder. ChatGPT is visibly future work and makes no request.
+- The AI pane defaults to Claude, Claude commands default to disabled, Claude uses a Keychain-stored API key with masked Configured/Change/Remove UX, exposes a persisted custom prefix and editable or fetched model choice, and routes only the configured-prefix remainder. ChatGPT is visibly future work and makes no request.
 - Models are supplied by the live catalog and are not hardcoded in the UI.
 - Only preflight-valid, optionally real-load-validated models appear installed.
 - Download progress and cancellation survive navigation away from the Models pane.

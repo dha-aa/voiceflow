@@ -40,7 +40,7 @@ The goal is not to claim that an unsigned artifact has the trust properties of a
 | Entitlements | Non-sandboxed app plus `com.apple.security.device.audio-input = true` |
 | App identity | `LSUIElement = true`, no Dock icon, menu-bar agent |
 | Local inference | WhisperKit 0.18.0, model files under app-owned Application Support storage |
-| Tests | 114 XCTest methods in the current test target after AI settings/model-discovery coverage |
+| Tests | 116 XCTest methods in the current test target after custom-prefix and API-key UX coverage |
 | Privacy | No audio, spoken text, transcript, prompt, response, or injected content in logs; optional Claude requests are explicit and text-only |
 | Protected branch | `main` requires pull requests, approval, and the `CI Quality Gate` status check |
 
@@ -62,7 +62,7 @@ If a model disappears between preload and transcription, the engine resolves the
 
 ### Transcription
 
-The transcription coordinator accepts work only while the shared state is `.processing`. Missing files, missing models, load failures, empty output, and runtime failures map to the documented shared errors. `TextProcessor` removes only known `[BLANK_AUDIO]`/`(inaudible)` artifacts and normalizes whitespace; it does not paraphrase or rewrite. When Claude commands are enabled and the processed transcript begins with `Claude`, only the remaining text is sent to Anthropic over HTTPS; the returned text replaces the local transcript before injection. Normal dictation remains local.
+The transcription coordinator accepts work only while the shared state is `.processing`. Missing files, missing models, load failures, empty output, and runtime failures map to the documented shared errors. `TextProcessor` removes only known `[BLANK_AUDIO]`/`(inaudible)` artifacts and normalizes whitespace; it does not paraphrase or rewrite. When Claude commands are enabled, Claude is selected, and the processed transcript begins with the persisted custom prefix, only the remaining text is sent to Anthropic over HTTPS; the returned text replaces the local transcript before injection. Matching is case-insensitive and rejects an embedded prefix inside another word. Normal dictation remains local.
 
 ### Injection
 
@@ -74,11 +74,11 @@ Successful injection transitions through `.completed` and then `.idle` after app
 
 ### Overlay and Settings
 
-The overlay is a non-activating 270×58 pt panel with a 252×48 pt single black capsule, no native panel shadow, and no outer backing/border artifact. `.preparingModel` displays Loading model; `.recording` displays Listening; `.processing` and `.injecting` display Processing; `.completed` displays Done for about 400 ms; errors display a short message. Settings navigation uses explicit buttons, model download progress survives tab changes, active-model deletion is blocked, and the Settings window resets to its intended size when reopened. The Settings window contains General, AI, Models, and About panes. The AI pane persists the selected provider and per-provider model IDs, stores Claude credentials only in Keychain, and lets the user refresh Claude’s model list through the authenticated provider API. ChatGPT is represented as future UI only and has no active request path. [12] [13] [14] [15]
+The overlay is a non-activating 270×58 pt panel with a 252×48 pt single black capsule, no native panel shadow, and no outer backing/border artifact. `.preparingModel` displays Loading model; `.recording` displays Listening; `.processing` and `.injecting` display Processing; `.completed` displays Done for about 400 ms; errors display a short message. Settings navigation uses explicit buttons, model download progress survives tab changes, active-model deletion is blocked, and the Settings window resets to its intended size when reopened. The Settings window contains General, AI, Models, and About panes. The AI pane persists the selected provider, per-provider model IDs, and custom command prefix; stores Claude credentials only in Keychain; shows a masked Configured state with Change/Remove controls; and lets the user refresh Claude’s model list through the authenticated provider API. ChatGPT is represented as future UI only and has no active request path. [12] [13] [14] [15]
 
 ## 4. Privacy and security requirements
 
-All microphone capture, temporary recordings, model files, and default WhisperKit inference remain local. The application must not send audio to a remote endpoint. Optional Claude processing is an explicit user-enabled exception: only the text after a leading `Claude` command is sent to Anthropic, and the UI/documentation must disclose that network boundary.
+All microphone capture, temporary recordings, model files, and default WhisperKit inference remain local. The application must not send audio to a remote endpoint. Optional Claude processing is an explicit user-enabled exception: only the text after the persisted leading custom prefix is sent to Anthropic, and the UI/documentation must disclose that network boundary.
 
 Structured logs may contain only metadata needed for diagnosis, such as state names, model identifiers, canonical paths, process IDs, bundle identifiers, durations, byte counts, frame counts, progress, result character counts, and error categories. They must not contain audio samples, spoken phrases, raw transcription, Claude prompts, Claude responses, injected text, API keys, or full clipboard contents. [16]
 
@@ -209,7 +209,7 @@ This guidance does not bypass macOS security silently and does not claim that th
 
 ## 11. Tests and final verification
 
-The current repository contains 114 XCTest methods distributed across state, audio, transcription, injection, overlay, Settings, LLM, package-import, and baseline tests. The complete test target is the primary regression gate. [22]
+The current repository contains 116 XCTest methods distributed across state, audio, transcription, injection, overlay, Settings, LLM, package-import, and baseline tests. The complete test target is the primary regression gate. [22]
 
 Final verification must include:
 
@@ -229,7 +229,7 @@ Final verification must include:
 - Branch protection requires the CI check and pull-request approval before normal merging.
 - No dedicated lint/format tool is claimed unless one is actually configured; current repository quality checks remain documented.
 - Privacy-safe logging contains no audio, speech, transcript, Claude prompt, Claude response, API key, or injected text.
-- Optional Claude processing is disabled by default, uses a Keychain-stored user key, sends only an explicit command remainder, uses the configured Claude model, and returns failures to a recoverable state.
+- Optional Claude processing is disabled by default, uses a Keychain-stored user key, shows only a masked Configured state after saving, sends only the remainder after the persisted custom prefix, uses the configured Claude model, and returns failures to a recoverable state.
 - AI settings persist the selected provider and model. Claude model refresh uses the authenticated Models API; ChatGPT remains explicitly unimplemented and makes no request.
 - Known edge cases are mapped to safe errors or explicitly recorded as current limitations.
 - Model download → structural validation → exact-folder load validation → detection → preload → transcription remains consistent.

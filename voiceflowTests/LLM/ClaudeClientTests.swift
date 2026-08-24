@@ -14,6 +14,28 @@ final class ClaudeClientTests: XCTestCase {
         XCTAssertNil(ClaudeCommand.parse("please summarize this"))
     }
 
+    func test_parserSupportsCustomPhrasePrefixAndCaseInsensitiveMatching() {
+        XCTAssertEqual(
+            AICommand.parse("Ask Claude, explain this code", prefix: "Ask Claude")?.prompt,
+            "explain this code"
+        )
+        XCTAssertEqual(
+            AICommand.parse("@CLAUDE rewrite this", prefix: "@claude")?.prompt,
+            "rewrite this"
+        )
+        XCTAssertNil(AICommand.parse("please Ask Claude, explain this", prefix: "Ask Claude"))
+        XCTAssertNil(AICommand.parse("AIassistant explain this", prefix: "AI"))
+    }
+
+    func test_commandPrefixDefaultsAndPersists() {
+        let defaults = UserDefaults(suiteName: "ai-prefix-\(UUID().uuidString)")!
+
+        XCTAssertEqual(AISettings.commandPrefix(in: defaults), AISettings.defaultCommandPrefix)
+        defaults.set("Jarvis", forKey: AISettings.commandPrefixKey)
+
+        XCTAssertEqual(AISettings.commandPrefix(in: defaults), "Jarvis")
+    }
+
     func test_processorDoesNothingForNormalDictation() async throws {
         let defaults = UserDefaults(suiteName: "claude-normal-\(UUID().uuidString)")!
         defaults.set(true, forKey: ClaudeSettings.enabledKey)
@@ -35,6 +57,7 @@ final class ClaudeClientTests: XCTestCase {
         let defaults = UserDefaults(suiteName: "claude-forward-\(UUID().uuidString)")!
         defaults.set(true, forKey: ClaudeSettings.enabledKey)
         defaults.set("claude-sonnet-5", forKey: ClaudeSettings.modelKey)
+        defaults.set("Ask Claude", forKey: AISettings.commandPrefixKey)
         let client = TestClaudeAPIClient(response: "Claude response")
         let keyStore = TestClaudeAPIKeyStore(apiKey: "test-key")
         let processor = ClaudeCommandProcessor(
@@ -43,7 +66,7 @@ final class ClaudeClientTests: XCTestCase {
             userDefaults: defaults
         )
 
-        let result = try await processor.processIfRequested("Claude, make this concise")
+        let result = try await processor.processIfRequested("Ask Claude, make this concise")
 
         XCTAssertEqual(result, "Claude response")
         XCTAssertEqual(client.callCount, 1)
@@ -98,12 +121,13 @@ final class ClaudeClientTests: XCTestCase {
 
         let engine = TranscriptionEngine(
             modelManager: manager,
-            sessionFactory: TestSessionFactory(result: .success("Claude, summarize this note"))
+            sessionFactory: TestSessionFactory(result: .success("Jarvis, summarize this note"))
         )
         let stateManager = AppStateManager()
         stateManager.transition(to: .processing)
         let claudeDefaults = UserDefaults(suiteName: "claude-coordinator-settings-\(UUID().uuidString)")!
         claudeDefaults.set(true, forKey: ClaudeSettings.enabledKey)
+        claudeDefaults.set("Jarvis", forKey: AISettings.commandPrefixKey)
         let client = TestClaudeAPIClient(response: "Summarized note")
         let processor = ClaudeCommandProcessor(
             apiClient: client,

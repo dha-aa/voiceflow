@@ -88,7 +88,10 @@ struct ClaudeCommandProcessor {
     func processIfRequested(_ text: String) async throws -> String? {
         guard ClaudeSettings.isEnabled(in: userDefaults),
               AISettings.selectedProvider(in: userDefaults) == .claude,
-              let command = ClaudeCommand.parse(text) else {
+              let command = AICommand.parse(
+                text,
+                prefix: AISettings.commandPrefix(in: userDefaults)
+              ) else {
             return nil
         }
         let apiKey: String?
@@ -130,25 +133,7 @@ struct ClaudeCommandProcessor {
     }
 }
 
-struct ClaudeCommand {
-    let prompt: String
-
-    static func parse(_ text: String) -> ClaudeCommand? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let firstWordRange = trimmed.range(of: #"^\s*[^\s]+"#, options: .regularExpression) else {
-            return nil
-        }
-        let firstWord = String(trimmed[firstWordRange]).trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalizedWord = firstWord.trimmingCharacters(in: CharacterSet(charactersIn: ",:;.!?"))
-        guard normalizedWord.caseInsensitiveCompare("Claude") == .orderedSame else {
-            return nil
-        }
-
-        let remainder = trimmed[firstWordRange.upperBound...]
-            .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ",:;.!?-")))
-        return ClaudeCommand(prompt: remainder)
-    }
-}
+typealias ClaudeCommand = AICommand
 
 private struct LiveClaudeAPIClient: ClaudeAPIClient {
     private static let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!

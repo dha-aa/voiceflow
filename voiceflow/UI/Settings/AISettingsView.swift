@@ -11,9 +11,11 @@ struct AISettingsView: View {
     @AppStorage(AISettings.selectedProviderKey) private var selectedProviderRawValue = AIProvider.claude.rawValue
     @AppStorage(AISettings.commandsEnabledKey) private var claudeCommandsEnabled = false
     @AppStorage(AISettings.modelKey(for: .claude)) private var claudeModel = ClaudeSettings.defaultModel
+    @AppStorage(AISettings.commandPrefixKey) private var commandPrefix = AISettings.defaultCommandPrefix
 
     @State private var claudeAPIKey = ""
     @State private var hasClaudeAPIKey = false
+    @State private var isEditingClaudeAPIKey = false
     @State private var availableClaudeModels: [AIModel] = []
     @State private var isRefreshingModels = false
     @State private var statusMessage: String?
@@ -58,33 +60,57 @@ struct AISettingsView: View {
 
             Section("Claude") {
                 Toggle("Enable Claude commands", isOn: $claudeCommandsEnabled)
-                Text("Start a spoken request with “Claude” to send only the remaining text to Anthropic. Normal dictation remains local.")
+                Text("Start a spoken request with your configured prefix to send only the remaining text to Anthropic. Normal dictation remains local.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
                 if selectedProvider == .claude {
-                    SecureField("Anthropic API key", text: $claudeAPIKey)
+                    TextField("Command prefix", text: $commandPrefix)
                         .textFieldStyle(.roundedBorder)
-                        .disabled(!claudeCommandsEnabled)
 
-                    HStack {
-                        Button("Save API key") {
-                            saveClaudeAPIKey()
+                    Text("The prefix must appear at the beginning of the transcript. Examples: Claude, Ask Claude, AI, @claude, or Jarvis.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    if isEditingClaudeAPIKey || !hasClaudeAPIKey {
+                        SecureField("Anthropic API key", text: $claudeAPIKey)
+                            .textFieldStyle(.roundedBorder)
+
+                        HStack {
+                            Button("Save API key") {
+                                saveClaudeAPIKey()
+                            }
+                            .disabled(claudeAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                            if hasClaudeAPIKey {
+                                Button("Cancel") {
+                                    claudeAPIKey = ""
+                                    isEditingClaudeAPIKey = false
+                                }
+                            }
                         }
-                        .disabled(claudeAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-                        if hasClaudeAPIKey {
-                            Button("Remove key", role: .destructive) {
+                    } else {
+                        LabeledContent("API Key") {
+                            Text("••••••••••••••••")
+                                .monospaced()
+                                .foregroundStyle(.secondary)
+                        }
+                        LabeledContent("Status") {
+                            Label("Configured", systemImage: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                        }
+                        HStack {
+                            Button("Change API Key") {
+                                claudeAPIKey = ""
+                                isEditingClaudeAPIKey = true
+                            }
+                            Button("Remove API Key", role: .destructive) {
                                 removeClaudeAPIKey()
                             }
                         }
                     }
 
-                    if hasClaudeAPIKey {
-                        Label("API key saved in macOS Keychain", systemImage: "checkmark.circle")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    } else {
+                    if !hasClaudeAPIKey {
                         Text("Add an Anthropic API key before enabling Claude commands.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -96,7 +122,6 @@ struct AISettingsView: View {
                 if modelChoices.isEmpty {
                     TextField("Claude model ID", text: $claudeModel)
                         .textFieldStyle(.roundedBorder)
-                        .disabled(!claudeCommandsEnabled)
                 } else {
                     Picker("Model", selection: $claudeModel) {
                         ForEach(modelChoices) { model in
@@ -104,7 +129,6 @@ struct AISettingsView: View {
                                 .tag(model.id)
                         }
                     }
-                    .disabled(!claudeCommandsEnabled)
                 }
 
                 HStack {
@@ -158,6 +182,7 @@ struct AISettingsView: View {
     private func loadClaudeKeyStatus() {
         do {
             hasClaudeAPIKey = try KeychainAPIKeyStore(provider: .claude).read() != nil
+            isEditingClaudeAPIKey = !hasClaudeAPIKey
         } catch {
             setStatus("Could not read the Claude API key from Keychain.", isError: true)
         }
@@ -170,6 +195,7 @@ struct AISettingsView: View {
             try KeychainAPIKeyStore(provider: .claude).save(trimmedKey)
             claudeAPIKey = ""
             hasClaudeAPIKey = true
+            isEditingClaudeAPIKey = false
             setStatus("Claude API key saved securely.", isError: false)
         } catch {
             setStatus("Could not save the Claude API key to Keychain.", isError: true)
@@ -181,6 +207,7 @@ struct AISettingsView: View {
             try KeychainAPIKeyStore(provider: .claude).remove()
             claudeAPIKey = ""
             hasClaudeAPIKey = false
+            isEditingClaudeAPIKey = true
             availableClaudeModels = []
             setStatus("Claude API key removed.", isError: false)
         } catch {

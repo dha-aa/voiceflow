@@ -100,9 +100,9 @@ The app is intentionally non-sandboxed because the current implementation uses g
 
 ### AI settings and optional Claude commands
 
-Open **Settings → AI** to choose the default AI provider. Claude is currently the only implemented provider; ChatGPT is shown as a future provider and does not make OpenAI requests in this version. Enable Claude commands, enter an Anthropic API key, and save it. VoiceFlow stores the key in the macOS Keychain, not in UserDefaults, source files, logs, or model files. The Claude model is selected per provider and can be entered manually or fetched from Anthropic with **Fetch available models**. The initial fallback is `claude-sonnet-5`; use a model ID available to your Anthropic account. Anthropic documents the model-list operation and direct Messages API request headers.[4] [5]
+Open **Settings → AI** to choose the default AI provider. Claude is currently the only implemented provider; ChatGPT is shown as a future provider and does not make OpenAI requests in this version. Enable Claude commands, set a custom command prefix, enter an Anthropic API key, and save it. After saving, the UI shows a masked value and **Configured** status with **Change API Key** and **Remove API Key** controls. VoiceFlow stores the key in the macOS Keychain, not in UserDefaults, source files, logs, or model files. The Claude model is selected per provider and can be entered manually or fetched from Anthropic with **Fetch available models**. The initial fallback is `claude-sonnet-5`; use a model ID available to your Anthropic account. Anthropic documents the model-list operation and direct Messages API request headers.[4] [5]
 
-When enabled, a spoken transcript beginning with `Claude` routes only the remaining text to Claude. For example, `Claude, rewrite this politely` sends `rewrite this politely`; normal dictation does not call the network. Claude’s returned text is then sent through the existing injection path. Microphone audio and the ordinary local transcription remain local, but the explicitly routed text is intentionally sent to Anthropic using the user’s own key. VoiceFlow logs only provider/model identifiers, character counts, durations, and error categories—not API keys, prompts, responses, audio, or injected text.
+When enabled, a spoken transcript beginning with the configured custom prefix routes only the remaining text to Claude. The default prefix is `Claude`, but users can choose a phrase such as `Ask Claude`, `AI`, `@claude`, or `Jarvis`. For example, with the prefix `Claude`, `Claude, rewrite this politely` sends `rewrite this politely`; normal dictation does not call the network. Claude’s returned text is then sent through the existing injection path. Microphone audio and the ordinary local transcription remain local, but the explicitly routed text is intentionally sent to Anthropic using the user’s own key. VoiceFlow logs only provider/model identifiers, character counts, durations, and error categories—not API keys, prompts, responses, audio, or injected text.
 
 ## Development commands
 
@@ -122,7 +122,7 @@ xcodebuild \
   CODE_SIGNING_ALLOWED=NO
 ```
 
-The current suite contains **114 tests** covering the recording stage, pipeline coordination, model management, transcription session behavior, text injection, overlay state, AI provider/model persistence, Claude model-list decoding, and related regressions. See [`docs/testing.md`](docs/testing.md) for the full verification matrix.
+The current suite contains **116 tests** covering the recording stage, pipeline coordination, model management, transcription session behavior, text injection, overlay state, AI provider/model persistence, custom-prefix routing, Claude model-list decoding, and related regressions. See [`docs/testing.md`](docs/testing.md) for the full verification matrix.
 
 Build a local unsigned app bundle into `build/` with the convenience script:
 
