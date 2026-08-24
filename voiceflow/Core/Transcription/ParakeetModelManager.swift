@@ -74,6 +74,7 @@ struct ParakeetModelValidation: Equatable, Sendable {
         case complete
         case missingArtifacts([String])
         case invalidCoreMLArtifacts([String])
+        case incomplete(missingArtifacts: [String], invalidCoreMLArtifacts: [String])
         case unsupportedSourceFormat([String])
     }
 
@@ -99,6 +100,8 @@ struct ParakeetModelValidation: Equatable, Sendable {
             "Incomplete model. Missing: \(artifacts.joined(separator: ", "))."
         case .invalidCoreMLArtifacts(let artifacts):
             "Incomplete Core ML bundle: \(artifacts.joined(separator: "; "))."
+        case .incomplete(let missingArtifacts, let invalidCoreMLArtifacts):
+            "Incomplete model. Missing: \(missingArtifacts.joined(separator: ", ")). Core ML issues: \(invalidCoreMLArtifacts.joined(separator: "; "))."
         case .unsupportedSourceFormat(let markers):
             "This is an NVIDIA NeMo/Transformers source repository (\(markers.joined(separator: ", "))), not a FluidAudio Core ML bundle. Download the FluidInference conversion instead."
         }
@@ -384,11 +387,19 @@ final class ParakeetModelManager: ParakeetModelProviding {
             }
         }
 
-        if !missingArtifacts.isEmpty {
-            return ParakeetModelValidation(status: .missingArtifacts(missingArtifacts.sorted()))
+        let sortedMissingArtifacts = missingArtifacts.sorted()
+        let sortedInvalidBundles = invalidBundles.sorted()
+        if !sortedMissingArtifacts.isEmpty && !sortedInvalidBundles.isEmpty {
+            return ParakeetModelValidation(status: .incomplete(
+                missingArtifacts: sortedMissingArtifacts,
+                invalidCoreMLArtifacts: sortedInvalidBundles
+            ))
         }
-        if !invalidBundles.isEmpty {
-            return ParakeetModelValidation(status: .invalidCoreMLArtifacts(invalidBundles.sorted()))
+        if !sortedMissingArtifacts.isEmpty {
+            return ParakeetModelValidation(status: .missingArtifacts(sortedMissingArtifacts))
+        }
+        if !sortedInvalidBundles.isEmpty {
+            return ParakeetModelValidation(status: .invalidCoreMLArtifacts(sortedInvalidBundles))
         }
         return ParakeetModelValidation(status: .complete)
     }

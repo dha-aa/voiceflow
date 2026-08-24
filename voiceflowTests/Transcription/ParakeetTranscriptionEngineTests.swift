@@ -49,6 +49,23 @@ final class ParakeetTranscriptionEngineTests: XCTestCase {
         XCTAssertEqual(restored.modelDirectory.lastPathComponent, "parakeet-tdt-0.6b-v2")
     }
 
+    func test_validationIdentifiesPartialCompiledBundleAlongsideMissingArtifacts() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("parakeet-partial-bundle-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let decoder = directory.appendingPathComponent("Decoder.mlmodelc", isDirectory: true)
+        try FileManager.default.createDirectory(at: decoder, withIntermediateDirectories: true)
+        let analytics = decoder.appendingPathComponent("analytics", isDirectory: true)
+        try FileManager.default.createDirectory(at: analytics, withIntermediateDirectories: true)
+        try Data("partial".utf8).write(to: analytics.appendingPathComponent("coremldata.bin"))
+
+        let validation = ParakeetModelManager.validation(at: directory, variant: .v3)
+
+        XCTAssertTrue(validation.message.contains("Decoder.mlmodelc"), validation.message)
+        XCTAssertTrue(validation.message.contains("model.mil"), validation.message)
+    }
+
     func test_validationRequiresExactV3CoreMLArtifacts() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("parakeet-v3-validation-\(UUID().uuidString)", isDirectory: true)
