@@ -17,6 +17,7 @@ VoiceFlow is a privacy-first native macOS menu-bar dictation application. Hold *
 |---|---|
 | Push-to-talk | A sustained Fn hold starts one recording session; releasing Fn stops it. A brief tap does not intentionally start dictation. |
 | Local transcription | WhisperKit runs the selected Core ML model locally. The app reuses a loaded session when the selected model has not changed. |
+| Claude commands | Optional BYOK Claude processing is triggered only when a transcript starts with `Claude`; normal dictation remains local. |
 | Model management | Settings provides model availability, download progress, local Core ML model-folder import, selection, installation detection, validation, deletion protection, and Finder navigation. |
 | Readiness gating | VoiceFlow preloads the selected model and waits for it to be ready before recording begins. |
 | Text injection | The focused application is captured when recording begins. Accessibility-based insertion is attempted before keyboard-event fallback. |
@@ -97,6 +98,12 @@ Logs must remain metadata-only. Safe examples include model IDs, model paths, au
 
 The app is intentionally non-sandboxed because the current implementation uses global Fn monitoring and cross-process Accessibility text injection. The Release target enables Hardened Runtime and carries only the microphone entitlement required by the app’s current design.
 
+### Optional Claude commands
+
+To enable Claude processing, open **Settings → General → Claude commands**, enable **Enable Claude commands**, enter an Anthropic API key, and save it. VoiceFlow stores the key in the macOS Keychain, not in UserDefaults, source files, logs, or model files. The default model is editable in Settings and is initialized to `claude-sonnet-5`; use a model ID available to your Anthropic account. Anthropic documents direct requests with the `x-api-key` header, the `anthropic-version: 2023-06-01` header, and `POST https://api.anthropic.com/v1/messages`.[4]
+
+When enabled, a spoken transcript beginning with `Claude` routes only the remaining text to Claude. For example, `Claude, rewrite this politely` sends `rewrite this politely`; normal dictation does not call the network. Claude’s returned text is then sent through the existing injection path. Microphone audio and the ordinary local transcription remain local, but the explicitly routed text is intentionally sent to Anthropic using the user’s own key. VoiceFlow logs only provider/model identifiers, character counts, durations, and error categories—not API keys, prompts, responses, audio, or injected text.
+
 ## Development commands
 
 Run the complete XCTest suite from a full Xcode installation:
@@ -160,3 +167,4 @@ The unsigned workflow can publish a DMG to GitHub Releases without Apple credent
 [1]: https://github.com/argmaxinc/argmax-oss-swift "Argmax OSS Swift"
 [2]: https://developer.apple.com/documentation/security/customizing-the-notarization-workflow "Apple: Customizing the notarization workflow"
 [3]: https://support.apple.com/en-gb/guide/mac-help/mh40616/mac "Apple Support: Safely open apps on Mac"
+[4]: https://platform.claude.com/docs/en/manage-claude/authentication "Anthropic: Claude API authentication"

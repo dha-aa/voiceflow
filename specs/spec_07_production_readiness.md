@@ -15,7 +15,7 @@ Unsigned publication is a supported workflow, not a failed signed release. It mu
 
 Production readiness means that VoiceFlow:
 
-- Preserves local-only audio, model, and dictated-text handling.
+- Preserves local-only audio, model, and ordinary dictated-text handling while clearly disclosing the optional user-authorized Claude route.
 - Has deterministic state/error behavior across permission, model, recording, transcription, and injection failures.
 - Reuses a preloaded WhisperKit session without blocking the UI unnecessarily.
 - Presents a focus-safe overlay and adaptive menu-bar identity icon.
@@ -40,8 +40,8 @@ The goal is not to claim that an unsigned artifact has the trust properties of a
 | Entitlements | Non-sandboxed app plus `com.apple.security.device.audio-input = true` |
 | App identity | `LSUIElement = true`, no Dock icon, menu-bar agent |
 | Local inference | WhisperKit 0.18.0, model files under app-owned Application Support storage |
-| Tests | 102 XCTest methods in the current test target at the time of this specification update |
-| Privacy | No audio, spoken text, transcript, or injected content in logs |
+| Tests | 110 XCTest methods in the current test target after Claude integration coverage |
+| Privacy | No audio, spoken text, transcript, prompt, response, or injected content in logs; optional Claude requests are explicit and text-only |
 | Protected branch | `main` requires pull requests, approval, and the `CI Quality Gate` status check |
 
 The actual project metadata, entitlements, and resolved dependencies are authoritative over this table. [3] [4] [5]
@@ -62,7 +62,7 @@ If a model disappears between preload and transcription, the engine resolves the
 
 ### Transcription
 
-The transcription coordinator accepts work only while the shared state is `.processing`. Missing files, missing models, load failures, empty output, and runtime failures map to the documented shared errors. `TextProcessor` removes only known `[BLANK_AUDIO]`/`(inaudible)` artifacts and normalizes whitespace; it does not paraphrase or rewrite.
+The transcription coordinator accepts work only while the shared state is `.processing`. Missing files, missing models, load failures, empty output, and runtime failures map to the documented shared errors. `TextProcessor` removes only known `[BLANK_AUDIO]`/`(inaudible)` artifacts and normalizes whitespace; it does not paraphrase or rewrite. When Claude commands are enabled and the processed transcript begins with `Claude`, only the remaining text is sent to Anthropic over HTTPS; the returned text replaces the local transcript before injection. Normal dictation remains local.
 
 ### Injection
 
@@ -78,7 +78,7 @@ The overlay is a non-activating 270×58 pt panel with a 252×48 pt single black 
 
 ## 4. Privacy and security requirements
 
-All microphone capture, temporary recordings, model files, and WhisperKit inference remain local. The application must not send audio or dictated text to a remote endpoint.
+All microphone capture, temporary recordings, model files, and default WhisperKit inference remain local. The application must not send audio to a remote endpoint. Optional Claude processing is an explicit user-enabled exception: only the text after a leading `Claude` command is sent to Anthropic, and the UI/documentation must disclose that network boundary.
 
 Structured logs may contain only metadata needed for diagnosis, such as state names, model identifiers, canonical paths, process IDs, bundle identifiers, durations, byte counts, frame counts, progress, result character counts, and error categories. They must not contain audio samples, spoken phrases, raw transcription, injected text, or full clipboard contents. [14]
 
@@ -95,12 +95,14 @@ The app is intentionally non-sandboxed in the current design. This is an archite
 .noAudioDetected
 .modelNotInstalled
 .modelFailedToLoad
-.transcriptionFailed
-.injectionFailed
-.accessibilityPermissionDenied
+    .transcriptionFailed
+    .claudeNotConfigured
+    .claudeRequestFailed
+    .injectionFailed
+    .accessibilityPermissionDenied
 ```
 
-The overlay maps them to current short messages: `Microphone unavailable`, `No audio detected`, `Model not installed`, `Model not loaded`, `Transcription failed`, `Insertion failed`, and `Allow Accessibility access`. The state manager recovers error states to `.idle` after about two seconds. [15] [16]
+The overlay maps them to current short messages: `Microphone unavailable`, `No audio detected`, `Model not installed`, `Model not loaded`, `Transcription failed`, `Configure Claude API key`, `Claude request failed`, `Insertion failed`, and `Allow Accessibility access`. The state manager recovers error states to `.idle` after about two seconds. [15] [16]
 
 The current implementation still contains a small number of legacy `print` statements in state/coordinator paths. This is a known cleanup inconsistency. A hardening pass may replace them with `VoiceFlowLog` calls, but it must preserve privacy-safe metadata and must not change state sequencing. A future error-message redesign must update both `AppError` presentation tests and the overlay tests together.
 
@@ -207,7 +209,7 @@ This guidance does not bypass macOS security silently and does not claim that th
 
 ## 11. Tests and final verification
 
-The current repository contains 102 XCTest methods distributed across state, audio, transcription, injection, overlay, Settings, package-import, and baseline tests. The complete test target is the primary regression gate. [19]
+The current repository contains 110 XCTest methods distributed across state, audio, transcription, injection, overlay, Settings, LLM, package-import, and baseline tests. The complete test target is the primary regression gate. [19]
 
 Final verification must include:
 
@@ -226,7 +228,8 @@ Final verification must include:
 - CI runs on PRs to `main` and reports a single required `CI Quality Gate` check.
 - Branch protection requires the CI check and pull-request approval before normal merging.
 - No dedicated lint/format tool is claimed unless one is actually configured; current repository quality checks remain documented.
-- Privacy-safe logging contains no audio, speech, transcript, or injected text.
+- Privacy-safe logging contains no audio, speech, transcript, Claude prompt, Claude response, or injected text.
+- Optional Claude processing is disabled by default, uses a Keychain-stored user key, sends only an explicit command remainder, and returns failures to a recoverable state.
 - Known edge cases are mapped to safe errors or explicitly recorded as current limitations.
 - Model download → structural validation → exact-folder load validation → detection → preload → transcription remains consistent.
 - Completion sound remains success-only and disabled by default.
@@ -262,7 +265,7 @@ TranscriptionEngine ── canonical model resolution + cached WhisperKit sessio
     ↓
 TextProcessor
     ↓
-TranscriptionCoordinator
+TranscriptionCoordinator ── optional Claude command ──→ Anthropic Messages API
     ↓
 TextInjector ── AX first, keyboard fallback when trusted
     ↓
@@ -297,6 +300,8 @@ ModelManager ──→ TranscriptionEngine
 [18]: ../.github/workflows/release.yml "Release workflow"
 [19]: ../voiceflowTests "VoiceFlow XCTest target"
 [20]: https://developer.apple.com/documentation/security/notarizing_macos_software_before_distribution "Apple notarization guidance"
+[21]: ../voiceflow/Core/LLM/ClaudeClient.swift "Claude BYOK client and command processor"
+[22]: https://platform.claude.com/docs/en/manage-claude/authentication "Anthropic Claude API authentication"
 
 ## Implementation inconsistency register
 

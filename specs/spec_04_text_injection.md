@@ -2,7 +2,7 @@
 
 ## Status and dependency
 
-Specification 04 consumes the processed text and captured target application from Specification 03 and completes the core VoiceFlow pipeline. The current pipeline is:
+Specification 04 consumes the final processed text—either locally normalized text or the response from an explicitly requested Claude command—and the captured target application from Specification 03, then completes the core VoiceFlow pipeline. The current pipeline is:
 
 ```text
 Fn hold → permission/model readiness → record → process → transcribe → inject → completed → idle
@@ -44,7 +44,7 @@ The overlay, Settings window, and model-management UI are later presentation lay
 (String, NSRunningApplication?)
 ```
 
-The injection coordinator consumes that callback and does not rediscover the frontmost application. Target capture remains the responsibility of `RecordingCoordinator`.
+The injection coordinator consumes that callback and does not rediscover the frontmost application. It treats a Claude-generated response the same as locally processed text; provider routing is complete before this handoff. Target capture remains the responsibility of `RecordingCoordinator`.
 
 ## 3. TextInjector behavior
 
@@ -149,7 +149,7 @@ Manual verification:
 - Completion sound is disabled by default, uses Tink/Pop/Glass, and plays only after successful injection.
 - The core pipeline works without the overlay or Settings window.
 - All injection and core-pipeline tests pass.
-- Audio, spoken text, transcribed text, and injected text never appear in logs.
+- Audio, spoken text, transcribed text, Claude prompts/responses, and injected text never appear in logs.
 
 ## 8. Core Pipeline Verification Gate
 
@@ -174,6 +174,7 @@ Specification 05 may observe `AppStateManager`, `AudioRecorder.audioLevel`, and 
 [5]: ../voiceflowTests/Injection/InjectionCoordinatorTests.swift "Injection coordinator tests"
 [6]: ../voiceflowTests/Transcription/TranscriptionPipelineIntegrationTests.swift "Transcription pipeline integration tests"
 [7]: https://developer.apple.com/documentation/applicationservices/axisprocesstrusted "Apple Accessibility trust API"
+[8]: ../voiceflow/Core/LLM/ClaudeClient.swift "Claude BYOK client and command processor"
 
 ## Implementation inconsistency register
 

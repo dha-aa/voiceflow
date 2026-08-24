@@ -19,8 +19,9 @@ This stage must provide:
 - Transcription of the temporary audio URL produced by Specification 02.
 - Pure, deterministic cleanup of known WhisperKit output artifacts.
 - A coordinator that emits injection-ready text only from the `.processing` state.
+- An optional explicit Claude command route that sends only user-requested text to Anthropic after local transcription.
 
-This stage does not inject text, render the overlay, provide Settings UI, or implement release packaging.
+This stage does not inject text, render the overlay, provide Settings UI, or implement release packaging. Claude API credential entry is presented by Specification 06, while the secure client and routing contract are defined here.
 
 ## 2. Model storage contract
 
@@ -170,7 +171,15 @@ The engine error categories are:
 
 `TextProcessor` is a pure value type in `voiceflow/Core/Transcription/TextProcessor.swift`. It replaces `[BLANK_AUDIO]` and `(inaudible)` markers case-insensitively with spaces, splits on whitespace/newlines, removes empty tokens, and rejoins with single spaces. It does not paraphrase, rewrite, or otherwise change the user’s wording or punctuation.
 
-## 6. TranscriptionCoordinator
+## 6. Optional Claude command processing
+
+`ClaudeCommandProcessor` and `LiveClaudeAPIClient` are located in `voiceflow/Core/LLM/ClaudeClient.swift`. Claude processing is disabled by default and is invoked only when the normalized local transcript begins with the explicit command word `Claude`, case-insensitively, optionally followed by punctuation. The command prefix is removed before the request; normal dictated text never calls the network.
+
+The Anthropic API key is stored in the macOS Keychain under the app bundle identifier and is never stored in `UserDefaults`, source files, logs, or audio/model files. The client sends a text-only Messages API request over HTTPS with `x-api-key`, `anthropic-version: 2023-06-01`, and `Content-Type: application/json`. It uses the configured model ID and a bounded `max_tokens` value, parses only text content blocks, rejects empty responses, and never logs the API key, prompt, response, audio, or injected text. The user explicitly opts into sending the remaining transcript text to Anthropic by enabling Claude commands.
+
+Claude configuration, missing-key, empty-response, and request failures map to dedicated shared application errors and return the pipeline to a recoverable error state. The response replaces the local transcript before the existing `.injecting` transition and injection callback.
+
+## 7. TranscriptionCoordinator
 
 `TranscriptionCoordinator` accepts the `RecordingCoordinator` audio callback and is called only while `AppStateManager.currentState == .processing`. Requests in any other state are ignored.
 
@@ -180,9 +189,10 @@ The current flow is:
 processing
   → TranscriptionEngine.transcribe(audioURL:)
   → TextProcessor.process(rawText)
-  → reject empty processed text as noAudioDetected
+  → optional ClaudeCommandProcessor.processIfRequested(processedText)
+  → reject empty final text as noAudioDetected
   → state = injecting
-  → onTranscriptionComplete(processedText, targetApp)
+  → onTranscriptionComplete(finalText, targetApp)
 ```
 
 Its callback is:
@@ -200,9 +210,9 @@ Engine errors map to shared `AppError` values as follows:
 | `.noAudioDetected` | `.noAudioDetected` |
 | `.audioFileNotFound`, `.transcriptionFailed` | `.transcriptionFailed` |
 
-A missing injection callback is treated as `.injectionFailed`. The coordinator never logs raw audio or text.
+A missing injection callback is treated as `.injectionFailed`. Claude configuration failures map to `.claudeNotConfigured`; HTTP, decoding, and empty-response failures map to `.claudeRequestFailed`. The coordinator never logs raw audio, prompts, responses, or injected text.
 
-## 7. Tests and verification
+## 8. Tests and verification
 
 The current executable tests include:
 
@@ -213,10 +223,11 @@ The current executable tests include:
 | `voiceflowTests/Transcription/TranscriptionCoordinatorTests.swift` | Processing-state gate, artifact cleanup, processed callback text, success-to-injecting transition, missing-model mapping |
 | `voiceflowTests/Transcription/TranscriptionPipelineIntegrationTests.swift` | Audio fixture through transcription coordinator to injection-ready callback |
 | `voiceflowTests/Transcription/TextProcessorTests.swift` | Whitespace and known-artifact cleanup |
+| `voiceflowTests/LLM/ClaudeClientTests.swift` | Claude-prefix parsing, normal-dictation bypass, prompt forwarding, missing-key handling, and coordinator routing |
 
 Tests must use temporary model directories and injected catalog/session factories. They must not download real models or log real spoken content in ordinary unit-test runs. A manual real-model verification may use a locally installed WhisperKit model and a controlled audio fixture, but the fixture content must not be written to logs.
 
-## 8. Acceptance criteria
+## 9. Acceptance criteria
 
 - Standard catalog calls use repository `argmaxinc/whisperkit-coreml` and the one canonical Application Support download base; registered custom models use their explicit repository metadata.
 - Standard installed paths follow the direct Hub layout under `models/argmaxinc/whisperkit-coreml/openai_whisper-<variant>`; custom imports use their registered repository namespace and exact folder name.
@@ -230,10 +241,11 @@ Tests must use temporary model directories and injected catalog/session factorie
 - Transcription never implicitly downloads and never uses a different model folder from the one validated.
 - Missing, incomplete, unloaded, silent, missing-file, and runtime failure cases map to documented errors.
 - Text cleanup is pure and preserves intended wording.
-- Transcription runs only from `.processing`, transitions success to `.injecting`, and emits processed text with the original target application.
-- All transcription tests pass and no audio/text content is logged.
+- Transcription runs only from `.processing`, optionally routes explicit Claude commands, transitions success to `.injecting`, and emits final text with the original target application.
+- Claude commands are disabled by default, use Keychain credentials, and send only the explicitly routed text to Anthropic.
+- All transcription and Claude tests pass and no audio, prompt, response, or injected-text content is logged.
 
-## 9. Handoff to Specification 04
+## 10. Handoff to Specification 04
 
 Specification 04 receives a processed non-empty `String`, the captured `NSRunningApplication?`, and an `AppStateManager` already in `.injecting`. It must not reload the model, reprocess the text, or rediscover the target application.
 
@@ -248,11 +260,13 @@ Specification 04 receives a processed non-empty `String`, the captured `NSRunnin
 [7]: ../voiceflowTests/Transcription/TranscriptionEngineTests.swift "Transcription engine tests"
 [8]: ../voiceflowTests/Transcription/TranscriptionCoordinatorTests.swift "Transcription coordinator tests"
 [9]: ../voiceflowTests/Transcription/TranscriptionPipelineIntegrationTests.swift "Transcription pipeline integration tests"
+[10]: ../voiceflow/Core/LLM/ClaudeClient.swift "Claude BYOK client and command processor"
+[11]: ../voiceflowTests/LLM/ClaudeClientTests.swift "Claude command tests"
 
-## Implementation inconsistency register
+## 11. Implementation inconsistency register
 
 The historical specification described the old snapshot-cache path and treated directory existence as installation. The current implementation intentionally supersedes both assumptions with direct Hub layout, structural preflight, exact-folder validation, and real load validation. It also requires model readiness before recording, which is coordinated in Specification 02 and must remain consistent here.
 
-## Completion gate
+## 12. Completion gate
 
 Do not begin Specification 04 until canonical model discovery, download validation, exact-folder loading, preload/cache behavior, transcription error mapping, and coordinator tests pass. A controlled local transcription verification must also confirm that a valid fixture reaches the processed-text callback.

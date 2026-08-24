@@ -1,0 +1,262 @@
+//
+//  ClaudeClient.swift
+//  VoiceFlow
+//
+//  Claude BYOK integration for explicit voice commands.
+//
+
+import Foundation
+import OSLog
+import Security
+
+protocol ClaudeAPIClient {
+    func complete(prompt: String, apiKey: String, model: String) async throws -> String
+}
+
+protocol ClaudeAPIKeyStore {
+    func read() throws -> String?
+    func save(_ apiKey: String) throws
+    func remove() throws
+}
+
+enum ClaudeKeychainError: Error {
+    case readFailed(OSStatus)
+    case saveFailed(OSStatus)
+    case removeFailed(OSStatus)
+}
+
+final class KeychainClaudeAPIKeyStore: ClaudeAPIKeyStore {
+    private let service: String
+    private let account = "anthropic-api-key"
+
+    init(service: String = Bundle.main.bundleIdentifier ?? "dha-aa.voiceflow") {
+        self.service = service
+    }
+
+    func read() throws -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status != errSecItemNotFound else { return nil }
+        guard status == errSecSuccess,
+              let data = result as? Data,
+              let value = String(data: data, encoding: .utf8),
+              !value.isEmpty else {
+            throw ClaudeKeychainError.readFailed(status)
+        }
+        return value
+    }
+
+    func save(_ apiKey: String) throws {
+        try remove()
+        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedKey.isEmpty,
+              let data = trimmedKey.data(using: .utf8) else {
+            return
+        }
+        let attributes: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        ]
+        let status = SecItemAdd(attributes as CFDictionary, nil)
+        guard status == errSecSuccess else {
+            throw ClaudeKeychainError.saveFailed(status)
+        }
+    }
+
+    func remove() throws {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+        let status = SecItemDelete(query as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw ClaudeKeychainError.removeFailed(status)
+        }
+    }
+}
+
+enum ClaudeSettings {
+    static let enabledKey = "claudeCommandsEnabled"
+    static let modelKey = "claudeModel"
+    static let defaultModel = "claude-sonnet-5"
+
+    static func isEnabled(in defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: enabledKey) as? Bool ?? false
+    }
+
+    static func model(in defaults: UserDefaults = .standard) -> String {
+        let value = defaults.string(forKey: modelKey)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return value.isEmpty ? defaultModel : value
+    }
+}
+
+enum ClaudeCommandError: Error {
+    case notConfigured
+    case keychainUnavailable
+    case requestFailed
+    case emptyResponse
+}
+
+struct ClaudeCommandProcessor {
+    private let apiClient: ClaudeAPIClient
+    private let keyStore: ClaudeAPIKeyStore
+    private let userDefaults: UserDefaults
+
+    init(
+        apiClient: ClaudeAPIClient = LiveClaudeAPIClient(),
+        keyStore: ClaudeAPIKeyStore = KeychainClaudeAPIKeyStore(),
+        userDefaults: UserDefaults = .standard
+    ) {
+        self.apiClient = apiClient
+        self.keyStore = keyStore
+        self.userDefaults = userDefaults
+    }
+
+    func processIfRequested(_ text: String) async throws -> String? {
+        guard ClaudeSettings.isEnabled(in: userDefaults),
+              let command = ClaudeCommand.parse(text) else {
+            return nil
+        }
+        let apiKey: String?
+        do {
+            apiKey = try keyStore.read()
+        } catch {
+            throw ClaudeCommandError.keychainUnavailable
+        }
+        guard let apiKey,
+              !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ClaudeCommandError.notConfigured
+        }
+        guard !command.prompt.isEmpty else {
+            throw ClaudeCommandError.emptyResponse
+        }
+
+        let model = ClaudeSettings.model(in: userDefaults)
+        let startedAt = Date()
+        VoiceFlowLog.llm.info("claude_request_started model_id=\(model, privacy: .public) prompt_character_count=\(command.prompt.count, privacy: .public)")
+        do {
+            let response = try await apiClient.complete(
+                prompt: command.prompt,
+                apiKey: apiKey,
+                model: model
+            )
+            let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else {
+                throw ClaudeCommandError.emptyResponse
+            }
+            VoiceFlowLog.llm.info("claude_request_succeeded model_id=\(model, privacy: .public) response_character_count=\(trimmed.count, privacy: .public) duration_seconds=\(Date().timeIntervalSince(startedAt), privacy: .public)")
+            return trimmed
+        } catch let error as ClaudeCommandError {
+            VoiceFlowLog.llm.error("claude_request_failed model_id=\(model, privacy: .public) category=\(String(describing: error), privacy: .public)")
+            throw error
+        } catch {
+            VoiceFlowLog.llm.error("claude_request_failed model_id=\(model, privacy: .public) category=runtime duration_seconds=\(Date().timeIntervalSince(startedAt), privacy: .public)")
+            throw ClaudeCommandError.requestFailed
+        }
+    }
+}
+
+struct ClaudeCommand {
+    let prompt: String
+
+    static func parse(_ text: String) -> ClaudeCommand? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let firstWordRange = trimmed.range(of: #"^\s*[^\s]+"#, options: .regularExpression) else {
+            return nil
+        }
+        let firstWord = String(trimmed[firstWordRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedWord = firstWord.trimmingCharacters(in: CharacterSet(charactersIn: ",:;.!?"))
+        guard normalizedWord.caseInsensitiveCompare("Claude") == .orderedSame else {
+            return nil
+        }
+
+        let remainder = trimmed[firstWordRange.upperBound...]
+            .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ",:;.!?-")))
+        return ClaudeCommand(prompt: remainder)
+    }
+}
+
+private struct LiveClaudeAPIClient: ClaudeAPIClient {
+    private static let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
+    private static let anthropicVersion = "2023-06-01"
+
+    private struct RequestBody: Encodable {
+        let model: String
+        let maxTokens: Int
+        let messages: [Message]
+
+        enum CodingKeys: String, CodingKey {
+            case model
+            case maxTokens = "max_tokens"
+            case messages
+        }
+    }
+
+    private struct Message: Encodable {
+        let role: String
+        let content: String
+    }
+
+    private struct ResponseBody: Decodable {
+        let content: [ContentBlock]
+    }
+
+    private struct ContentBlock: Decodable {
+        let type: String
+        let text: String?
+
+        enum CodingKeys: String, CodingKey {
+            case type
+            case text
+        }
+    }
+
+    func complete(prompt: String, apiKey: String, model: String) async throws -> String {
+        var request = URLRequest(url: Self.endpoint)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 120
+        request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+        request.setValue(Self.anthropicVersion, forHTTPHeaderField: "anthropic-version")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(
+            RequestBody(
+                model: model,
+                maxTokens: 1024,
+                messages: [Message(role: "user", content: prompt)]
+            )
+        )
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw ClaudeCommandError.requestFailed
+        }
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            throw ClaudeHTTPError.status(httpResponse.statusCode)
+        }
+
+        let decoded = try JSONDecoder().decode(ResponseBody.self, from: data)
+        let text = decoded.content
+            .filter { $0.type == "text" }
+            .compactMap(\.text)
+            .joined(separator: "\n")
+        guard !text.isEmpty else {
+            throw ClaudeCommandError.emptyResponse
+        }
+        return text
+    }
+}
+
+private enum ClaudeHTTPError: Error {
+    case status(Int)
+}

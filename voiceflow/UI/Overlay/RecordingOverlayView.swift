@@ -184,6 +184,8 @@ private extension AppError {
         case .modelNotInstalled: "Model not installed"
         case .modelFailedToLoad: "Model not loaded"
         case .transcriptionFailed: "Transcription failed"
+        case .claudeNotConfigured: "Configure Claude API key"
+        case .claudeRequestFailed: "Claude request failed"
         case .injectionFailed: "Insertion failed"
         case .accessibilityPermissionDenied: "Allow Accessibility access"
         }

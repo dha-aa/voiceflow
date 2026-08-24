@@ -53,15 +53,18 @@ Each `show(modelManager:)` call updates the retained manager, reuses the downloa
 | `showRecordingOverlay` | `true` | Controls whether the transient overlay is shown |
 | `playCompletionSound` | `false` | Controls success-only completion audio |
 | `completionSoundEffect` | `Tink` | Selected `CompletionSoundEffect` raw value |
+| `claudeCommandsEnabled` | `false` | Enables explicit spoken Claude commands |
+| `claudeModel` | `claude-sonnet-5` | Anthropic model ID used for Claude requests |
 
 The pane contains these sections:
 
 - **Push-to-Talk:** displays `Hold Fn to Talk`, `Enabled`, and `Hold Fn to record. Release Fn to transcribe.` The feature is currently always enabled and has no toggle.
 - **Startup:** controls `Launch VoiceFlow at Login` through `SMAppService.mainApp.register()` and `.unregister()`. It displays enabled, approval-required, not-registered, or unavailable status and shows registration errors inline.
 - **Feedback:** controls `Play completion sound` and a disabled-until-enabled picker containing `Tink`, `Pop`, and `Glass`. The actual playback remains owned by `InjectionCoordinator` and occurs only after successful injection.
+- **Claude commands:** controls `Enable Claude commands`, the editable Anthropic model ID, and a secure API-key field. Saving writes the key to the macOS Keychain; UserDefaults stores only the enabled flag and model ID. The UI never displays the stored key after saving. The feature is disabled by default. When enabled, only transcripts beginning with `Claude` are sent to Anthropic; ordinary dictation remains local.
 - **Appearance:** controls `Show recording overlay when recording` and explains that the overlay does not take focus.
 
-Changing the overlay setting takes effect through `UserDefaults.didChangeNotification` without relaunching. Completion sound preferences are read by the injection coordinator and persist across launches.
+Changing the overlay setting takes effect through `UserDefaults.didChangeNotification` without relaunching. Completion sound preferences are read by the injection coordinator and persist across launches. Claude enabled/model preferences persist through UserDefaults, while the API key is stored and removed through Keychain operations.
 
 ## 5. Models pane
 
@@ -132,11 +135,13 @@ Manual verification must confirm:
 9. Import Model accepts the Oriserve folder, shows import/validation progress, detects the installed model immediately, and rejects invalid or duplicate folders safely.
 10. A successful download or import is validated, load-checked, detected immediately, and reused by transcription.
 11. A failed structural or WhisperKit load validation is not shown as installed.
-12. Finder opens the canonical app-owned model folder.
-13. Active-model deletion is blocked; inactive deletion requires confirmation.
-14. Selecting a different installed model triggers replacement/preload before the next recording.
-15. About shows correct metadata and links.
-16. The core TextEdit pipeline and overlay remain regression-free.
+12. Claude commands are disabled by default, the API key is saved only in Keychain, and the model ID is editable.
+13. A Claude-prefixed transcript sends only the remaining text to Anthropic and injects the returned text; a normal transcript never sends a network request.
+14. Finder opens the canonical app-owned model folder.
+15. Active-model deletion is blocked; inactive deletion requires confirmation.
+16. Selecting a different installed model triggers replacement/preload before the next recording.
+17. About shows correct metadata and links.
+18. The core TextEdit pipeline and overlay remain regression-free.
 
 ## 9. Acceptance criteria
 
@@ -145,6 +150,7 @@ Manual verification must confirm:
 - The window reopens at its intended 760×500 content size with the 680×420 minimum.
 - Launch-at-login uses `SMAppService.mainApp` and displays actionable errors.
 - Overlay preference defaults true and persists; completion sound defaults false and persists with Tink/Pop/Glass selection.
+- Claude commands default to disabled, use a Keychain-stored API key, expose an editable model ID, and route only the explicit `Claude` command remainder.
 - Models are supplied by the live catalog and are not hardcoded in the UI.
 - Only preflight-valid, optionally real-load-validated models appear installed.
 - Download progress and cancellation survive navigation away from the Models pane.

@@ -11,17 +11,20 @@ final class TranscriptionCoordinator {
     private let stateManager: AppStateManager
     private let engine: TranscriptionEngine
     private let processor: TextProcessor
+    private let claudeProcessor: ClaudeCommandProcessor
 
     var onTranscriptionComplete: ((String, NSRunningApplication?) -> Void)?
 
     init(
         stateManager: AppStateManager,
         engine: TranscriptionEngine,
-        processor: TextProcessor
+        processor: TextProcessor,
+        claudeProcessor: ClaudeCommandProcessor = ClaudeCommandProcessor()
     ) {
         self.stateManager = stateManager
         self.engine = engine
         self.processor = processor
+        self.claudeProcessor = claudeProcessor
         VoiceFlowLog.pipeline.debug("transcription_coordinator_initialized")
     }
 
@@ -39,9 +42,15 @@ final class TranscriptionCoordinator {
             let rawText = try await engine.transcribe(audioURL: audioURL)
             VoiceFlowLog.pipeline.debug("transcription_stage_succeeded audio_id=\(audioID, privacy: .public) raw_character_count=\(rawText.count, privacy: .public)")
 
-            let finalText = processor.process(rawText)
-            guard !finalText.isEmpty else {
+            let processedText = processor.process(rawText)
+            guard !processedText.isEmpty else {
                 VoiceFlowLog.pipeline.error("transcription_processing_failed audio_id=\(audioID, privacy: .public) reason=empty_processed_text")
+                throw TranscriptionEngine.TranscriptionEngineError.noAudioDetected
+            }
+
+            let finalText = try await claudeProcessor.processIfRequested(processedText) ?? processedText
+            guard !finalText.isEmpty else {
+                VoiceFlowLog.pipeline.error("transcription_processing_failed audio_id=\(audioID, privacy: .public) reason=empty_final_text")
                 throw TranscriptionEngine.TranscriptionEngineError.noAudioDetected
             }
 
@@ -54,6 +63,16 @@ final class TranscriptionCoordinator {
             }
             onTranscriptionComplete(finalText, targetApp)
             VoiceFlowLog.pipeline.info("transcription_completion_callback_delivered audio_id=\(audioID, privacy: .public) target_application_present=\(targetApp != nil, privacy: .public)")
+        } catch let error as ClaudeCommandError {
+            let appError: AppError
+            switch error {
+            case .notConfigured, .keychainUnavailable:
+                appError = .claudeNotConfigured
+            case .requestFailed, .emptyResponse:
+                appError = .claudeRequestFailed
+            }
+            VoiceFlowLog.pipeline.error("claude_pipeline_failed audio_id=\(audioID, privacy: .public) app_error=\(String(describing: appError), privacy: .public)")
+            stateManager.transition(to: .error(appError))
         } catch let error as TranscriptionEngine.TranscriptionEngineError {
             transitionToError(for: error, audioID: audioID, startedAt: startedAt)
         } catch {

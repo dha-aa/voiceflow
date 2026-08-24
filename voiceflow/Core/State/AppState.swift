@@ -23,6 +23,8 @@ enum AppError: Error, Equatable {
     case modelNotInstalled
     case modelFailedToLoad
     case transcriptionFailed
+    case claudeNotConfigured
+    case claudeRequestFailed
     case injectionFailed
     case accessibilityPermissionDenied
 }
