@@ -26,7 +26,7 @@ struct ModelsSettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     speechEngineSection
-                    modelsList
+                    providerModelsList
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -131,15 +131,8 @@ struct ModelsSettingsView: View {
             .pickerStyle(.menu)
 
             if speechRecognitionSettings.selectedEngine == .parakeet {
-                Picker("FluidAudio model", selection: Binding(
-                    get: { parakeetModelManager.selectedVariant },
-                    set: { parakeetModelManager.selectVariant($0) }
-                )) {
-                    ForEach(ParakeetModelVariant.allCases) { variant in
-                        Text(variant.displayName).tag(variant)
-                    }
-                }
-                .pickerStyle(.menu)
+                Text("FluidAudio models")
+                    .font(.headline)
 
                 Text("\(parakeetModelManager.selectedVariant.languageDescription) · FluidAudio Core ML")
                     .font(.caption)
@@ -149,54 +142,54 @@ struct ModelsSettingsView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: parakeetModelManager.isInstalled ? "checkmark.circle.fill" : "exclamationmark.triangle")
-                            .foregroundStyle(parakeetModelManager.isInstalled ? .green : .secondary)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(parakeetModelManager.isInstalled ? "Installed and loadable" : "Not ready")
-                                .font(.caption.weight(.medium))
-                            Text(parakeetModelManager.errorMessage ?? parakeetModelManager.validation.message)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(3)
-                                .truncationMode(.tail)
-                        }
-                        Spacer(minLength: 4)
-                    }
-                    HStack(spacing: 8) {
-                        if parakeetModelManager.isLoading {
-                            ProgressView(value: parakeetModelManager.progress)
-                                .progressViewStyle(.linear)
-                                .frame(maxWidth: .infinity)
-                            Text("\(Int(parakeetModelManager.progress * 100))%")
-                                .font(.caption2.monospacedDigit())
-                                .foregroundStyle(.secondary)
-                            Button(parakeetModelManager.isCancelling ? "Cancelling…" : "Cancel") {
-                                parakeetModelManager.cancelDownload()
-                            }
-                            .buttonStyle(.borderless)
-                            .disabled(parakeetModelManager.isCancelling)
-                        } else if parakeetModelManager.isInstalled {
-                            Spacer()
-                            Button("Open Folder") {
-                                NSWorkspace.shared.open(parakeetModelManager.modelDirectory)
-                            }
-                            .buttonStyle(.borderless)
-                        } else {
-                            Spacer()
-                            Button(Self.parakeetActionTitle(isLoading: false, isInstalled: false)) {
-                                // A normal Download also repairs a stale partial cache automatically.
-                                startParakeetDownload(force: parakeetModelManager.needsRepair)
-                            }
-                            .buttonStyle(.borderedProminent)
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .padding(.bottom, 12)
+    }
+
+    static func showsWhisperModels(for engine: SpeechRecognitionSettings.Engine) -> Bool {
+        engine == .whisperKit
+    }
+
+    @ViewBuilder
+    private var providerModelsList: some View {
+        if Self.showsWhisperModels(for: speechRecognitionSettings.selectedEngine) {
+            modelsList
+        } else {
+            fluidAudioModelsList
+        }
+    }
+
+    private var fluidAudioModelsList: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(ParakeetModelManager.availableVariants) { variant in
+                FluidAudioModelRow(
+                    variant: variant,
+                    validation: parakeetModelManager.validation(for: variant),
+                    isDownloaded: parakeetModelManager.isInstalled(for: variant),
+                    isActive: parakeetModelManager.isActive(variant),
+                    isSelected: parakeetModelManager.selectedVariant == variant,
+                    isLoading: parakeetModelManager.isLoading && parakeetModelManager.selectedVariant == variant,
+                    isDownloadBlocked: parakeetModelManager.isLoading && parakeetModelManager.selectedVariant != variant,
+                    progress: parakeetModelManager.selectedVariant == variant ? parakeetModelManager.progress : 0,
+                    isCancelling: parakeetModelManager.isCancelling,
+                    onSelect: {
+                        parakeetModelManager.selectVariant(variant)
+                    },
+                    onDownload: {
+                        parakeetModelManager.selectVariant(variant)
+                        startParakeetDownload(force: parakeetModelManager.needsRepair)
+                    },
+                    onCancel: {
+                        parakeetModelManager.cancelDownload()
+                    },
+                    onOpenFolder: {
+                        NSWorkspace.shared.open(ParakeetModelManager.modelDirectory(for: variant))
+                    }
+                )
+                Divider()
+            }
+        }
     }
 
     private var modelsList: some View {
@@ -380,6 +373,79 @@ struct ModelsSettingsView: View {
             }
         }
         return error.localizedDescription
+    }
+}
+
+private struct FluidAudioModelRow: View {
+    let variant: ParakeetModelVariant
+    let validation: ParakeetModelValidation
+    let isDownloaded: Bool
+    let isActive: Bool
+    let isSelected: Bool
+    let isLoading: Bool
+    let isDownloadBlocked: Bool
+    let progress: Double
+    let isCancelling: Bool
+    let onSelect: () -> Void
+    let onDownload: () -> Void
+    let onCancel: () -> Void
+    let onOpenFolder: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: isActive ? "checkmark.circle.fill" : "circle")
+                .foregroundStyle(isActive ? .green : .secondary)
+                .font(.title3)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(variant.displayName)
+                        .font(.body.weight(.medium))
+                    if isActive {
+                        Text("Active")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.green)
+                    }
+                }
+                Text(variant.languageDescription + " · " + (isDownloaded ? "Downloaded" : validation.message))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+
+                if isLoading {
+                    HStack(spacing: 8) {
+                        ProgressView(value: progress)
+                            .progressViewStyle(.linear)
+                            .frame(maxWidth: 170)
+                        Text("\(Int(progress * 100))%")
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                        Button(isCancelling ? "Cancelling…" : "Cancel", action: onCancel)
+                            .buttonStyle(.borderless)
+                            .disabled(isCancelling)
+                    }
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            if isDownloaded {
+                if !isActive {
+                    Button("Set Active", action: onSelect)
+                        .buttonStyle(.bordered)
+                }
+                Button("Open Folder", action: onOpenFolder)
+                    .buttonStyle(.borderless)
+            } else if isLoading {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Button("Download", action: onDownload)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isDownloadBlocked)
+            }
+        }
+        .padding(.vertical, 6)
     }
 }
 

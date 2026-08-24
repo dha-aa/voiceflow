@@ -49,6 +49,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         let whisperKitEngine = TranscriptionEngine(modelManager: modelManager)
         let parakeetEngine = ParakeetTranscriptionEngine(modelManager: parakeetModelManager)
+        parakeetModelManager.onVariantChanged = { [weak parakeetEngine] in
+            parakeetEngine?.modelSelectionDidChange()
+        }
+        parakeetModelManager.onModelAvailabilityChanged = { [weak parakeetEngine] in
+            parakeetEngine?.preloadSelectedModel()
+        }
         let transcriptionEngine = SpeechTranscriptionRouter(
             settings: speechRecognitionSettings,
             whisperKitEngine: whisperKitEngine,

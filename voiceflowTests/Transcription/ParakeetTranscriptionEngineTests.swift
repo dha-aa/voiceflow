@@ -36,7 +36,13 @@ final class ParakeetTranscriptionEngineTests: XCTestCase {
             }
             throw CancellationError()
         }
-        let manager = ParakeetModelManager(downloadOperation: operation)
+        let baseDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("parakeet-cancel-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: baseDirectory) }
+        let manager = ParakeetModelManager(
+            baseDirectory: baseDirectory,
+            downloadOperation: operation
+        )
 
         manager.startDownload()
         await fulfillment(of: [started], timeout: 1)

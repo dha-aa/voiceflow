@@ -19,6 +19,18 @@ final class SettingsNavigationTests: XCTestCase {
         XCTAssertEqual(ModelsSettingsView.parakeetActionTitle(isLoading: false, isInstalled: false), "Download")
     }
 
+    func test_fluidAudioHidesWhisperModels() {
+        XCTAssertTrue(ModelsSettingsView.showsWhisperModels(for: .whisperKit))
+        XCTAssertFalse(ModelsSettingsView.showsWhisperModels(for: .parakeet))
+    }
+
+    func test_fluidAudioCatalogContainsBothDownloadableVariants() {
+        XCTAssertEqual(
+            ParakeetModelManager.availableVariants,
+            [.v3, .v2]
+        )
+    }
+
     func test_settingsDestinations_includeAllPanes() {
         let destinations = SettingsView.Destination.allCases
 

@@ -129,12 +129,14 @@ typealias ParakeetDownloadOperation = @Sendable (
 final class ParakeetModelManager: ParakeetModelProviding {
     static let modelBaseDirectory: URL = ModelManager.appModelsDirectory
         .appendingPathComponent("fluidaudio", isDirectory: true)
+    static let availableVariants = ParakeetModelVariant.allCases
 
     private static let selectedVariantKey = "selectedParakeetModelVariant"
     private static let compiledBundleContents = ["model.mil", "metadata.json", "coremldata.bin"]
 
     private let fileManager: FileManager
     private let userDefaults: UserDefaults
+    private let baseDirectory: URL
     private(set) var selectedVariant: ParakeetModelVariant
     private(set) var isInstalled: Bool
     private(set) var isLoading = false
@@ -146,10 +148,12 @@ final class ParakeetModelManager: ParakeetModelProviding {
     private var operationID = 0
     private let downloadOperation: ParakeetDownloadOperation
     var onVariantChanged: (() -> Void)?
+    var onModelAvailabilityChanged: (() -> Void)?
 
     init(
         fileManager: FileManager = .default,
         userDefaults: UserDefaults = .standard,
+        baseDirectory: URL = ParakeetModelManager.modelBaseDirectory,
         downloadOperation: @escaping ParakeetDownloadOperation = { directory, force, version, precision, progressHandler in
             try await AsrModels.download(
                 to: directory,
@@ -162,12 +166,13 @@ final class ParakeetModelManager: ParakeetModelProviding {
     ) {
         self.fileManager = fileManager
         self.userDefaults = userDefaults
+        self.baseDirectory = baseDirectory
         self.downloadOperation = downloadOperation
         let rawVariant = userDefaults.string(forKey: Self.selectedVariantKey)
         let variant = ParakeetModelVariant(rawValue: rawVariant ?? "") ?? .v3
         self.selectedVariant = variant
         let initialValidation = Self.validation(
-            at: Self.modelDirectory(for: variant),
+            at: Self.modelDirectory(for: variant, baseDirectory: baseDirectory),
             variant: variant,
             fileManager: fileManager
         )
@@ -176,7 +181,7 @@ final class ParakeetModelManager: ParakeetModelProviding {
     }
 
     var modelDirectory: URL {
-        Self.modelDirectory(for: selectedVariant)
+        Self.modelDirectory(for: selectedVariant, baseDirectory: baseDirectory)
     }
 
     var isSupportedPlatform: Bool {
@@ -191,6 +196,22 @@ final class ParakeetModelManager: ParakeetModelProviding {
         validation.isPresent && !validation.isComplete
     }
 
+    func validation(for variant: ParakeetModelVariant) -> ParakeetModelValidation {
+        Self.validation(
+            at: Self.modelDirectory(for: variant, baseDirectory: baseDirectory),
+            variant: variant,
+            fileManager: fileManager
+        )
+    }
+
+    func isInstalled(for variant: ParakeetModelVariant) -> Bool {
+        validation(for: variant).isComplete
+    }
+
+    func isActive(_ variant: ParakeetModelVariant) -> Bool {
+        selectedVariant == variant && isInstalled(for: variant)
+    }
+
     func selectVariant(_ variant: ParakeetModelVariant) {
         guard selectedVariant != variant else { return }
         selectedVariant = variant
@@ -200,6 +221,7 @@ final class ParakeetModelManager: ParakeetModelProviding {
             "parakeet_variant_selected variant=\(variant.rawValue, privacy: .public) repository=\(variant.repository, privacy: .public)"
         )
         onVariantChanged?()
+        onModelAvailabilityChanged?()
     }
 
     func refresh() {
@@ -275,7 +297,7 @@ final class ParakeetModelManager: ParakeetModelProviding {
         }
 
         let variant = selectedVariant
-        let directory = Self.modelDirectory(for: variant)
+        let directory = Self.modelDirectory(for: variant, baseDirectory: baseDirectory)
         isLoading = true
         progress = 0
         isInstalled = false
@@ -334,6 +356,7 @@ final class ParakeetModelManager: ParakeetModelProviding {
             isInstalled = true
             progress = 1
             progressHandler(1)
+            onModelAvailabilityChanged?()
             VoiceFlowLog.model.info(
                 "parakeet_model_download_validated variant=\(variant.rawValue, privacy: .public) model_directory=\(directory.path, privacy: .public)"
             )
@@ -364,8 +387,11 @@ final class ParakeetModelManager: ParakeetModelProviding {
         )
     }
 
-    static func modelDirectory(for variant: ParakeetModelVariant) -> URL {
-        modelBaseDirectory.appendingPathComponent(variant.cacheDirectoryName, isDirectory: true)
+    static func modelDirectory(
+        for variant: ParakeetModelVariant,
+        baseDirectory: URL = modelBaseDirectory
+    ) -> URL {
+        baseDirectory.appendingPathComponent(variant.cacheDirectoryName, isDirectory: true)
     }
 
     static func validation(
