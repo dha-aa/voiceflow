@@ -10,6 +10,15 @@ import WhisperKit
 
 @MainActor
 final class SettingsNavigationTests: XCTestCase {
+    func test_speechEnginePickerUsesProviderNames() {
+        XCTAssertEqual(SpeechRecognitionSettings.Engine.whisperKit.displayName, "WhisperKit")
+        XCTAssertEqual(SpeechRecognitionSettings.Engine.parakeet.displayName, "FluidAudio")
+    }
+
+    func test_fluidAudioModelActionUsesDownloadInsteadOfRepair() {
+        XCTAssertEqual(ModelsSettingsView.parakeetActionTitle(isLoading: false, isInstalled: false), "Download")
+    }
+
     func test_settingsDestinations_includeAllPanes() {
         let destinations = SettingsView.Destination.allCases
 

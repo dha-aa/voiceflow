@@ -104,7 +104,7 @@ final class SpeechRecognitionSettings {
         var displayName: String {
             switch self {
             case .whisperKit: "WhisperKit"
-            case .parakeet: "Parakeet TDT v3"
+            case .parakeet: "FluidAudio"
             }
         }
     }

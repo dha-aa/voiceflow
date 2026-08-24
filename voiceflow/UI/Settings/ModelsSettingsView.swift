@@ -87,6 +87,12 @@ struct ModelsSettingsView: View {
         }
     }
 
+    static func parakeetActionTitle(isLoading: Bool, isInstalled: Bool) -> String {
+        if isLoading { return "Cancel" }
+        if isInstalled { return "Open Folder" }
+        return "Download"
+    }
+
     private var header: some View {
         HStack {
             Text("Models")
@@ -125,7 +131,7 @@ struct ModelsSettingsView: View {
             .pickerStyle(.menu)
 
             if speechRecognitionSettings.selectedEngine == .parakeet {
-                Picker("Parakeet model", selection: Binding(
+                Picker("FluidAudio model", selection: Binding(
                     get: { parakeetModelManager.selectedVariant },
                     set: { parakeetModelManager.selectVariant($0) }
                 )) {
@@ -179,7 +185,8 @@ struct ModelsSettingsView: View {
                             .buttonStyle(.borderless)
                         } else {
                             Spacer()
-                            Button(parakeetModelManager.needsRepair ? "Repair" : "Download") {
+                            Button(Self.parakeetActionTitle(isLoading: false, isInstalled: false)) {
+                                // A normal Download also repairs a stale partial cache automatically.
                                 startParakeetDownload(force: parakeetModelManager.needsRepair)
                             }
                             .buttonStyle(.borderedProminent)
