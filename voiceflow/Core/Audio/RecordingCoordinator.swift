@@ -18,24 +18,29 @@ final class RecordingCoordinator {
     private let recorder: AudioRecording
     private let keyMonitor: FnKeyMonitor
     private weak var modelReadiness: ModelReadinessChecking?
+    private let selectedTextReader: FocusedTextSelectionReading?
 
     private var targetApplication: NSRunningApplication?
+    private var selectedTextAtStart: String?
     private var recordingStartTask: Task<Void, Never>?
     private var isFnHeld = false
 
     // Callback for when recording is complete.
     var onRecordingComplete: ((URL, NSRunningApplication?) -> Void)?
+    var onRecordingCompleteWithContext: ((URL, NSRunningApplication?, String?) -> Void)?
 
     init(
         stateManager: AppStateManager,
         recorder: AudioRecorder,
         keyMonitor: FnKeyMonitor,
-        modelReadiness: ModelReadinessChecking? = nil
+        modelReadiness: ModelReadinessChecking? = nil,
+        selectedTextReader: FocusedTextSelectionReading? = nil
     ) {
         self.stateManager = stateManager
         self.recorder = recorder
         self.keyMonitor = keyMonitor
         self.modelReadiness = modelReadiness
+        self.selectedTextReader = selectedTextReader
         setupKeyMonitorCallbacks()
     }
 
@@ -43,12 +48,14 @@ final class RecordingCoordinator {
         stateManager: AppStateManager,
         recorder: AudioRecording,
         keyMonitor: FnKeyMonitor,
-        modelReadiness: ModelReadinessChecking? = nil
+        modelReadiness: ModelReadinessChecking? = nil,
+        selectedTextReader: FocusedTextSelectionReading? = nil
     ) {
         self.stateManager = stateManager
         self.recorder = recorder
         self.keyMonitor = keyMonitor
         self.modelReadiness = modelReadiness
+        self.selectedTextReader = selectedTextReader
         setupKeyMonitorCallbacks()
     }
 
@@ -66,6 +73,7 @@ final class RecordingCoordinator {
             _ = recorder.stopRecording()
         }
         targetApplication = nil
+        selectedTextAtStart = nil
     }
 
     private func setupKeyMonitorCallbacks() {
@@ -88,6 +96,14 @@ final class RecordingCoordinator {
 
         isFnHeld = true
         targetApplication = NSWorkspace.shared.frontmostApplication
+        if let selectedTextReader {
+            let capturedText = try? selectedTextReader.selectedText(in: targetApplication)
+            selectedTextAtStart = capturedText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                ? capturedText
+                : nil
+        } else {
+            selectedTextAtStart = nil
+        }
 
         recordingStartTask?.cancel()
         recordingStartTask = Task { @MainActor [weak self] in
@@ -175,7 +191,11 @@ final class RecordingCoordinator {
         VoiceFlowLog.pipeline.info("recording_stage_completed audio_id=\(VoiceFlowLog.audioIdentifier(for: audioURL), privacy: .public)")
         print("State → processing")
         print("Recording complete: \(audioURL.path)")
-        onRecordingComplete?(audioURL, targetApplication)
+        let capturedTargetApplication = targetApplication
+        let capturedSelectedText = selectedTextAtStart
+        onRecordingCompleteWithContext?(audioURL, capturedTargetApplication, capturedSelectedText)
+        onRecordingComplete?(audioURL, capturedTargetApplication)
         targetApplication = nil
+        selectedTextAtStart = nil
     }
 }

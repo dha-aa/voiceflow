@@ -29,7 +29,11 @@ final class TranscriptionCoordinator {
         VoiceFlowLog.pipeline.debug("transcription_coordinator_initialized")
     }
 
-    func transcribe(audioURL: URL, targetApp: NSRunningApplication?) async {
+    func transcribe(
+        audioURL: URL,
+        targetApp: NSRunningApplication?,
+        selectedText: String? = nil
+    ) async {
         let audioID = VoiceFlowLog.audioIdentifier(for: audioURL)
         guard stateManager.currentState == .processing else {
             VoiceFlowLog.pipeline.debug("transcription_request_ignored audio_id=\(audioID, privacy: .public) reason=state_not_processing current_state=\(String(describing: self.stateManager.currentState), privacy: .public)")
@@ -54,7 +58,8 @@ final class TranscriptionCoordinator {
             }
             let finalText = try await claudeProcessor.processTranscribedText(
                 processedText,
-                targetApp: targetApp
+                targetApp: targetApp,
+                selectedText: selectedText
             ) ?? processedText
             guard !finalText.isEmpty else {
                 VoiceFlowLog.pipeline.error("transcription_processing_failed audio_id=\(audioID, privacy: .public) reason=empty_final_text")

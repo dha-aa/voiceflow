@@ -105,6 +105,37 @@ final class RecordingCoordinatorTests: XCTestCase {
         try? FileManager.default.removeItem(at: recorder.stopURL!)
     }
 
+    func test_coordinator_capturesSelectedTextAtFnDownAndForwardsIt() async throws {
+        let stateManager = AppStateManager()
+        let recorder = TestRecording()
+        recorder.stopURL = try makeTemporaryAudioURL()
+        let selectionReader = TestRecordingSelectionReader(selectedText: "Selected source text")
+        let monitor = FnKeyMonitor(holdThreshold: 0.01)
+        let coordinator = RecordingCoordinator(
+            stateManager: stateManager,
+            recorder: recorder,
+            keyMonitor: monitor,
+            selectedTextReader: selectionReader
+        )
+        let completion = expectation(description: "recording context completion")
+        var receivedSelection: String?
+        coordinator.onRecordingCompleteWithContext = { _, _, selectedText in
+            receivedSelection = selectedText
+            completion.fulfill()
+        }
+
+        coordinator.start()
+        monitor.handleFlagsChangedForTesting(isPressed: true)
+        try? await Task.sleep(for: .milliseconds(50))
+        monitor.handleFlagsChangedForTesting(isPressed: false)
+        await fulfillment(of: [completion], timeout: 1)
+
+        XCTAssertEqual(selectionReader.readCount, 1)
+        XCTAssertEqual(receivedSelection, "Selected source text")
+        coordinator.stop()
+        try? FileManager.default.removeItem(at: recorder.stopURL!)
+    }
+
     func test_coordinator_ignoresFnDown_whenStateIsNotIdle() async {
         let stateManager = AppStateManager()
         stateManager.transition(to: .processing)
@@ -211,6 +242,20 @@ private final class TestModelReadiness: ModelReadinessChecking {
     func resume() {
         continuation?.resume()
         continuation = nil
+    }
+}
+
+private final class TestRecordingSelectionReader: FocusedTextSelectionReading {
+    let selectedText: String?
+    private(set) var readCount = 0
+
+    init(selectedText: String?) {
+        self.selectedText = selectedText
+    }
+
+    func selectedText(in targetApp: NSRunningApplication?) throws -> String? {
+        readCount += 1
+        return selectedText
     }
 }
 

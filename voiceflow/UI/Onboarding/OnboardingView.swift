@@ -34,6 +34,7 @@ final class OnboardingModel {
         self.permissionManager = permissionManager ?? SystemVoiceFlowPermissionManager()
         self.userDefaults = userDefaults
         self.onFinished = onFinished
+        self.step = userDefaults.bool(forKey: VoiceFlowOnboardingDefaults.completedKey) ? .complete : .welcome
         refreshStatuses()
     }
 
@@ -103,11 +104,13 @@ final class OnboardingModel {
 
     func skipSetup() {
         userDefaults.set(true, forKey: VoiceFlowOnboardingDefaults.completedKey)
+        step = .complete
         onFinished()
     }
 
     func finish() {
         userDefaults.set(true, forKey: VoiceFlowOnboardingDefaults.completedKey)
+        step = .complete
         onFinished()
     }
 

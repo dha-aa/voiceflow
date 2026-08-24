@@ -86,6 +86,25 @@ final class OnboardingTests: XCTestCase {
         XCTAssertFalse(VoiceFlowPermission.screenRecording.isRequiredForCurrentVersion)
     }
 
+    func test_completedOnboardingRestoresCompleteStateAndDoesNotReappear() {
+        let defaults = UserDefaults(suiteName: "onboarding-complete-\(UUID().uuidString)")!
+        let permissionManager = FakePermissionManager()
+        let model = OnboardingModel(
+            permissionManager: permissionManager,
+            userDefaults: defaults
+        )
+
+        model.finish()
+        let relaunchedModel = OnboardingModel(
+            permissionManager: permissionManager,
+            userDefaults: defaults
+        )
+
+        XCTAssertFalse(relaunchedModel.isFirstLaunch)
+        XCTAssertEqual(relaunchedModel.step, .complete)
+        XCTAssertFalse(OnboardingWindowController.shouldShowOnLaunch(userDefaults: defaults))
+    }
+
     func test_skipSetupPersistsCompletionAndCallsFinishCallback() {
         let defaults = UserDefaults(suiteName: "onboarding-skip-\(UUID().uuidString)")!
         let permissionManager = FakePermissionManager()

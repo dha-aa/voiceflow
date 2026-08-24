@@ -186,6 +186,47 @@ final class ClaudeClientTests: XCTestCase {
         XCTAssertEqual(client.request?.systemPrompt, AIPromptBuilder.grammarFix)
     }
 
+    func test_processTranscribedTextAcceptsSelectionSnapshotWithoutTargetApp() async throws {
+        let defaults = UserDefaults(suiteName: "claude-selection-snapshot-\(UUID().uuidString)")!
+        defaults.set(true, forKey: ClaudeSettings.enabledKey)
+        let client = TestAIProviderClient(response: "Replaced selection")
+        let processor = ClaudeCommandProcessor(
+            providerClient: client,
+            keyStore: TestClaudeAPIKeyStore(apiKey: "test-key"),
+            userDefaults: defaults
+        )
+
+        let result = try await processor.processTranscribedText(
+            "Claude make this shorter",
+            targetApp: nil,
+            selectedText: "A long selected paragraph."
+        )
+
+        XCTAssertEqual(result, "Replaced selection")
+        XCTAssertEqual(client.request?.selectedText, "A long selected paragraph.")
+        XCTAssertEqual(client.request?.text, "make this shorter")
+    }
+
+    func test_commandPromptHandlesImperfectSpeechAndSelectionIntent() {
+        let prompt = AIPromptBuilder.systemPrompt(
+            for: .command,
+            includesScreenContext: false,
+            includesSelectedText: true
+        )
+
+        XCTAssertTrue(prompt.contains("imperfect"))
+        XCTAssertTrue(prompt.contains("selected text"))
+        XCTAssertTrue(prompt.contains("instruction"))
+    }
+
+    func test_grammarPromptCorrectsSpeechToTextErrorsWithoutRewriting() {
+        let prompt = AIPromptBuilder.grammarFix
+
+        XCTAssertTrue(prompt.contains("speech-to-text"))
+        XCTAssertTrue(prompt.contains("same meaning"))
+        XCTAssertTrue(prompt.contains("Do not answer"))
+    }
+
     func test_selectedTextIsForwardedAndScreenContextIsNotRequested() async throws {
         let defaults = UserDefaults(suiteName: "claude-selection-context-\(UUID().uuidString)")!
         defaults.set(true, forKey: ClaudeSettings.enabledKey)

@@ -74,6 +74,16 @@ final class TextInjectorTests: XCTestCase {
         }
     }
 
+    func test_textInjector_extractsSelectedTextFromValueAndUTF16Range() {
+        let value = "before 👋 selected text after"
+        let selectedText = TextInjector.selectedText(
+            from: value,
+            range: NSRange(location: 10, length: 13)
+        )
+
+        XCTAssertEqual(selectedText, "selected text")
+    }
+
     func test_textInjector_reportsError_onFailure() throws {
         let poster = TestKeyboardEventPoster()
         poster.error = TestInjectionError()

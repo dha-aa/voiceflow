@@ -58,8 +58,8 @@ protocol AIProviderClient {
 }
 
 enum AIPromptBuilder {
-    static let command = "Return only the final content requested, ready to paste. Preserve the user’s intent. No explanations, filler, or unrequested information. Keep requested code, commands, lists, and line breaks valid."
-    static let grammarFix = "Correct grammar, spelling, capitalization, punctuation, and obvious transcription errors only. Preserve meaning, wording, tone, and information. Return only the corrected text; no explanations, rewriting, Markdown, quotes, or added content."
+    static let command = "Interpret natural, incomplete, or imperfect voice instructions and infer the intended transformation. If selected text is supplied, transform it according to the instruction while preserving essential meaning unless change is requested. Return only paste-ready final content: no explanation, preamble, quotes, Markdown, or unrequested content. Keep code, commands, lists, and line breaks valid."
+    static let grammarFix = "Correct grammar, spelling, capitalization, punctuation, sentence structure, and obvious speech-to-text errors. Preserve the same meaning, wording, tone, and information; make only necessary corrections. Return corrected text only. Do not answer, explain, rewrite, add, remove, quote, or use Markdown."
     static let selectionContext = "Use the selected text as the material to transform and the request as the instruction. Return only the final replacement text."
     static let screenContext = "Use supplied screen context only to resolve references; do not describe it unless asked."
 

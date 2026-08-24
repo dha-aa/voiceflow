@@ -137,7 +137,8 @@ struct ClaudeCommandProcessor {
 
     func processTranscribedText(
         _ text: String,
-        targetApp: NSRunningApplication? = nil
+        targetApp: NSRunningApplication? = nil,
+        selectedText: String? = nil
     ) async throws -> String? {
         guard AISettings.selectedProvider(in: userDefaults) == .claude else {
             return nil
@@ -146,7 +147,11 @@ struct ClaudeCommandProcessor {
         // Explicit AI commands always win. Grammar correction must never edit
         // or reinterpret a command before its provider receives it.
         if let _ = requestedCommand(in: text) {
-            return try await processIfRequested(text, targetApp: targetApp)
+            return try await processIfRequested(
+                text,
+                targetApp: targetApp,
+                selectedText: selectedText
+            )
         }
 
         guard ClaudeSettings.isGrammarFixEnabled(in: userDefaults) else {
@@ -157,7 +162,8 @@ struct ClaudeCommandProcessor {
 
     func processIfRequested(
         _ text: String,
-        targetApp: NSRunningApplication? = nil
+        targetApp: NSRunningApplication? = nil,
+        selectedText: String? = nil
     ) async throws -> String? {
         guard ClaudeSettings.isEnabled(in: userDefaults),
               AISettings.selectedProvider(in: userDefaults) == .claude,
@@ -173,17 +179,17 @@ struct ClaudeCommandProcessor {
         }
 
         let model = AISettings.selectedModel(for: .claude, in: userDefaults)
-        let selectedText = readSelectedText(in: targetApp)
-        let screenContext = selectedText == nil ? screenContextProvider() : nil
+        let resolvedSelectedText = nonEmptySelection(selectedText) ?? readSelectedText(in: targetApp)
+        let screenContext = resolvedSelectedText == nil ? screenContextProvider() : nil
         let startedAt = Date()
-        VoiceFlowLog.llm.info("claude_request_started model_id=\(model, privacy: .public) prompt_character_count=\(command.prompt.count, privacy: .public) selection_present=\(selectedText != nil, privacy: .public)")
+        VoiceFlowLog.llm.info("claude_request_started model_id=\(model, privacy: .public) prompt_character_count=\(command.prompt.count, privacy: .public) selection_present=\(resolvedSelectedText != nil, privacy: .public)")
         do {
             let response = try await providerClient.complete(
                 request: AIProcessingRequest(
                     text: command.prompt,
                     mode: .command,
                     model: model,
-                    selectedText: selectedText,
+                    selectedText: resolvedSelectedText,
                     screenContext: screenContext
                 ),
                 apiKey: apiKey
@@ -241,6 +247,14 @@ struct ClaudeCommandProcessor {
     private func readSelectedText(in targetApp: NSRunningApplication?) -> String? {
         guard let selectedTextReader else { return nil }
         return try? selectedTextReader.selectedText(in: targetApp)
+    }
+
+    private func nonEmptySelection(_ text: String?) -> String? {
+        guard let text,
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return text
     }
 
     private func configuredAPIKey() throws -> String {

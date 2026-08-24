@@ -69,11 +69,46 @@ final class TextInjector: TextInjecting, FocusedTextSelectionReading {
             kAXSelectedTextAttribute as CFString,
             &selectedValue
         )
-        guard result == .success,
-              let selectedText = selectedValue as? String else {
+        if result == .success,
+           let selectedText = selectedValue as? String,
+           let nonEmptyText = Self.nonEmptySelectedText(selectedText) {
+            return nonEmptyText
+        }
+
+        // Some native and web-backed controls expose AXValue and
+        // AXSelectedTextRange but omit AXSelectedText. Derive the selection
+        // from the same UTF-16 range used by the injection path.
+        var currentValue: CFTypeRef?
+        let valueResult = AXUIElementCopyAttributeValue(
+            focusedElement,
+            kAXValueAttribute as CFString,
+            &currentValue
+        )
+        guard valueResult == .success,
+              let currentText = currentValue as? String else {
             return nil
         }
-        return selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : selectedText
+
+        let range = try selectedTextRange(
+            in: focusedElement,
+            textLength: (currentText as NSString).length
+        )
+        return Self.selectedText(from: currentText, range: range)
+    }
+
+    static func selectedText(from value: String, range: NSRange) -> String? {
+        let value = value as NSString
+        guard range.location >= 0,
+              range.length > 0,
+              range.location <= value.length,
+              range.length <= value.length - range.location else {
+            return nil
+        }
+        return nonEmptySelectedText(value.substring(with: range))
+    }
+
+    private static func nonEmptySelectedText(_ text: String) -> String? {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : text
     }
 
     func inject(text: String, into targetApp: NSRunningApplication?) throws {

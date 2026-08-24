@@ -80,7 +80,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             stateManager: stateManager,
             recorder: audioRecorder,
             keyMonitor: FnKeyMonitor(),
-            modelReadiness: transcriptionEngine
+            modelReadiness: transcriptionEngine,
+            selectedTextReader: textInjector
         )
         let overlayWindowController = OverlayWindowController(
             stateManager: stateManager,
@@ -93,11 +94,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        recordingCoordinator.onRecordingComplete = { [transcriptionCoordinator] audioURL, targetApplication in
+        recordingCoordinator.onRecordingCompleteWithContext = { [transcriptionCoordinator] audioURL, targetApplication, selectedText in
             Task { @MainActor in
                 await transcriptionCoordinator.transcribe(
                     audioURL: audioURL,
-                    targetApp: targetApplication
+                    targetApp: targetApplication,
+                    selectedText: selectedText
                 )
             }
         }
