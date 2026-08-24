@@ -278,7 +278,15 @@ struct ModelsSettingsView: View {
     }
 
     private func startParakeetDownload(force: Bool = false) {
-        parakeetModelManager.startDownload(force: force)
+        if force {
+            do {
+                try parakeetModelManager.repair()
+            } catch {
+                errorMessage = errorDescription(for: error)
+                return
+            }
+        }
+        parakeetModelManager.startDownload()
     }
 
     private func cancelDownload() {

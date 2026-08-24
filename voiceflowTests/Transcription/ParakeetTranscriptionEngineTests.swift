@@ -9,6 +9,19 @@ import XCTest
 
 @MainActor
 final class ParakeetTranscriptionEngineTests: XCTestCase {
+    func test_repairRemovesStalePartialCache() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("parakeet-repair-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data("partial".utf8).write(to: directory.appendingPathComponent("partial-download.marker"))
+
+        let removed = try ParakeetModelManager.repairModel(at: directory)
+
+        XCTAssertTrue(removed)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path))
+    }
+
     func test_cancelDownloadResetsStateWithoutReportingInstallation() async throws {
         let started = expectation(description: "download started")
         let cancellationObserved = expectation(description: "cancellation observed")

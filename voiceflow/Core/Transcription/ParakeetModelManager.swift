@@ -240,6 +240,22 @@ final class ParakeetModelManager: ParakeetModelProviding {
         }
     }
 
+    func repair() throws {
+        guard !isLoading else { return }
+        _ = try Self.repairModel(at: modelDirectory, fileManager: fileManager)
+        refresh()
+        errorMessage = nil
+    }
+
+    static func repairModel(
+        at directory: URL,
+        fileManager: FileManager = .default
+    ) throws -> Bool {
+        guard fileManager.fileExists(atPath: directory.path) else { return false }
+        try fileManager.removeItem(at: directory)
+        return true
+    }
+
     func cancelDownload() {
         guard isLoading, !isCancelling else { return }
         isCancelling = true
