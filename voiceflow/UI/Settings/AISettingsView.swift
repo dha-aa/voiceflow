@@ -171,6 +171,7 @@ struct AISettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .toggleStyle(.switch)
         .padding(24)
         .navigationTitle("AI")
         .task {

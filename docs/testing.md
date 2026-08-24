@@ -12,7 +12,7 @@ Testing requires a Mac with macOS 14 or later and the full Xcode installation. T
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 ```
 
-The current automated baseline is **116 XCTest tests with zero failures**. Tests that require microphone, Accessibility, a live WhisperKit model, or another application are supplemented by manual verification rather than being made dependent on a particular user machine.
+The current automated baseline is **118 XCTest tests with zero failures**. Tests that require microphone, Accessibility, a live WhisperKit model, or another application are supplemented by manual verification rather than being made dependent on a particular user machine.
 
 ## Automated XCTest suite
 
@@ -35,7 +35,7 @@ xcodebuild \
 A successful run ends with output similar to:
 
 ```text
-Executed 116 tests, with 0 failures
+Executed 118 tests, with 0 failures
 ** TEST SUCCEEDED **
 ```
 
@@ -89,7 +89,7 @@ xcodebuild \
 | Text processing | Conservative whitespace and formatting behavior without changing dictated meaning. |
 | Text injection | Empty input, missing target, Accessibility failure, keyboard fallback behavior, and injector error mapping. |
 | Injection coordination | Processing/injecting/completed transitions, successful completion sound selection, disabled sound behavior, and no sound on failures. |
-| Overlay UI | Loading model, Listening, Processing, Done, error states, animation cancellation, and approximately 400 ms completion dismissal. |
+| Overlay UI | Loading model, Listening, Processing, provider-specific `Using Claude...`/`Using ChatGPT...` labels, Done, error states, animation cancellation, and approximately 400 ms completion dismissal. |
 | Settings UI | General, AI, Models, and About navigation; overlay visibility; completion sound defaults and persistence; model selection; download progress across tabs; model actions; Claude enablement; provider/model persistence; custom-prefix persistence; Claude model-list decoding; masked Configured API-key status; and Change/Remove controls. |
 | Claude routing | Configurable word/phrase prefix parsing, case-insensitive matching, boundary protection, normal-dictation bypass, prompt forwarding, missing-key handling, request response handling, and coordinator routing. |
 | Menu-bar UI | State-dependent icon selection and native template rendering behavior. |
@@ -191,9 +191,9 @@ VoiceFlow expects the direct WhisperKit Hub repository layout below that root an
 
 ### Overlay, menu-bar, and Settings checks
 
-Verify that the overlay remains a single compact rounded pill without an extra gray backing, dark shadow layer, clipping artifact, or misaligned border. Confirm the sequence **Listening → Processing → Done → idle** and that Done lasts briefly after successful injection.
+Verify that the overlay remains a single compact rounded pill without an extra gray backing, dark shadow layer, clipping artifact, or misaligned border. Confirm the sequence **Listening → Processing → Done → idle** and that Done lasts briefly after successful injection. For an explicit AI command, confirm the processing label identifies the provider, such as **Using Claude...**, before the response is injected.
 
-Switch macOS between Light and Dark Mode and confirm that the idle menu-bar identity icon remains visible through native template rendering. Recording and error states should retain their semantic colors. Open Settings repeatedly and switch among General, AI, Models, and About to confirm the window size and navigation remain stable.
+Switch macOS between Light and Dark Mode and confirm that the idle menu-bar identity icon remains visible through native template rendering. Recording and error states should retain their semantic colors. Open Settings repeatedly and switch among General, AI, Models, and About to confirm the window size and navigation remain stable. Reopen it several times and verify every `Toggle` retains the native switch appearance rather than becoming a blue button-like control.
 
 In General, confirm that completion sound is off by default, can be enabled, persists after relaunch, and offers Tink, Pop, and Glass. Verify that a sound plays only after successful text injection and never after transcription or injection failure.
 

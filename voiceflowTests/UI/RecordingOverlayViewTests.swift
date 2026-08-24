@@ -26,6 +26,26 @@ final class RecordingOverlayViewTests: XCTestCase {
 
         XCTAssertEqual(model.presentationState, .processing)
         XCTAssertTrue(model.isVisible)
+        XCTAssertEqual(model.statusText, "Processing...")
+    }
+
+    func test_overlayView_identifiesClaudeWhileAIIsProcessing() {
+        let model = RecordingOverlayModel()
+
+        model.showAIProcessingState(provider: .claude)
+
+        XCTAssertEqual(model.statusText, "Using Claude...")
+        XCTAssertEqual(model.accessibilityStatusText, "Using Claude")
+        XCTAssertEqual(model.activeAIProvider, .claude)
+    }
+
+    func test_overlayView_identifiesChatGPTForFutureProviderSupport() {
+        let model = RecordingOverlayModel()
+
+        model.showAIProcessingState(provider: .chatGPT)
+
+        XCTAssertEqual(model.statusText, "Using ChatGPT...")
+        XCTAssertEqual(model.accessibilityStatusText, "Using ChatGPT")
     }
 
     func test_overlayView_showsProcessingState_whileInjecting() {

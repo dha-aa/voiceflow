@@ -40,7 +40,7 @@ The goal is not to claim that an unsigned artifact has the trust properties of a
 | Entitlements | Non-sandboxed app plus `com.apple.security.device.audio-input = true` |
 | App identity | `LSUIElement = true`, no Dock icon, menu-bar agent |
 | Local inference | WhisperKit 0.18.0, model files under app-owned Application Support storage |
-| Tests | 116 XCTest methods in the current test target after custom-prefix and API-key UX coverage |
+| Tests | 118 XCTest methods in the current test target after provider-aware overlay coverage |
 | Privacy | No audio, spoken text, transcript, prompt, response, or injected content in logs; optional Claude requests are explicit and text-only |
 | Protected branch | `main` requires pull requests, approval, and the `CI Quality Gate` status check |
 
@@ -209,7 +209,7 @@ This guidance does not bypass macOS security silently and does not claim that th
 
 ## 11. Tests and final verification
 
-The current repository contains 116 XCTest methods distributed across state, audio, transcription, injection, overlay, Settings, LLM, package-import, and baseline tests. The complete test target is the primary regression gate. [22]
+The current repository contains 118 XCTest methods distributed across state, audio, transcription, injection, overlay, Settings, LLM, package-import, and baseline tests. The complete test target is the primary regression gate. [22]
 
 Final verification must include:
 

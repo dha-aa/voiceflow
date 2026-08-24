@@ -67,6 +67,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             audioRecorder: audioRecorder
         )
 
+        transcriptionCoordinator.onAIProcessingStarted = { [weak overlayWindowController] provider in
+            Task { @MainActor in
+                overlayWindowController?.showAIProcessing(for: provider)
+            }
+        }
+
         recordingCoordinator.onRecordingComplete = { [transcriptionCoordinator] audioURL, targetApplication in
             Task { @MainActor in
                 await transcriptionCoordinator.transcribe(

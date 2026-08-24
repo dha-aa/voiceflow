@@ -17,11 +17,11 @@ VoiceFlow is a privacy-first native macOS menu-bar dictation application. Hold *
 |---|---|
 | Push-to-talk | A sustained Fn hold starts one recording session; releasing Fn stops it. A brief tap does not intentionally start dictation. |
 | Local transcription | WhisperKit runs the selected Core ML model locally. The app reuses a loaded session when the selected model has not changed. |
-| Claude commands | Optional BYOK Claude processing is triggered only when a transcript starts with `Claude`; normal dictation remains local. |
+| Claude commands | Optional BYOK Claude processing is triggered only when a transcript starts with the user-configured prefix; normal dictation remains local. |
 | Model management | Settings provides model availability, download progress, local Core ML model-folder import, selection, installation detection, validation, deletion protection, and Finder navigation. |
 | Readiness gating | VoiceFlow preloads the selected model and waits for it to be ready before recording begins. |
 | Text injection | The focused application is captured when recording begins. Accessibility-based insertion is attempted before keyboard-event fallback. |
-| Recording overlay | A compact floating HUD communicates Loading model, Listening, Processing, Done, and error states. |
+| Recording overlay | A compact floating HUD communicates Loading model, Listening, Processing, `Using Claude...` or `Using ChatGPT...` for AI requests, Done, and error states. |
 | Menu-bar status | The menu-bar icon reflects idle, recording, processing, completion, and error states. The idle identity mark is a native template image for Light and Dark Mode contrast. |
 | Completion feedback | General settings can enable a short completion sound and select Tink, Pop, or Glass. It is disabled by default and only plays after successful injection. |
 | Settings | General, AI, Models, and About sections are available from the menu-bar application. |
@@ -36,6 +36,7 @@ Fn held
 Fn released
   → Processing
   → local transcription
+  → Using Claude... / Using ChatGPT... (only for an explicit configured AI command)
   → text injection
   → Done
   → Idle
@@ -122,7 +123,7 @@ xcodebuild \
   CODE_SIGNING_ALLOWED=NO
 ```
 
-The current suite contains **116 tests** covering the recording stage, pipeline coordination, model management, transcription session behavior, text injection, overlay state, AI provider/model persistence, custom-prefix routing, Claude model-list decoding, and related regressions. See [`docs/testing.md`](docs/testing.md) for the full verification matrix.
+The current suite contains **118 tests** covering the recording stage, pipeline coordination, model management, transcription session behavior, text injection, overlay state, provider-aware overlay status, AI provider/model persistence, custom-prefix routing, Claude model-list decoding, and related regressions. See [`docs/testing.md`](docs/testing.md) for the full verification matrix.
 
 Build a local unsigned app bundle into `build/` with the convenience script:
 

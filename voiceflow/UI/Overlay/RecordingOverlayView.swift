@@ -20,6 +20,7 @@ final class RecordingOverlayModel {
 
     private(set) var presentationState: PresentationState = .hidden
     private(set) var audioLevel: Float = 0
+    private(set) var activeAIProvider: AIProvider?
 
     var isShowingDoneState: Bool {
         presentationState == .done
@@ -27,6 +28,46 @@ final class RecordingOverlayModel {
 
     var isVisible: Bool {
         presentationState != .hidden
+    }
+
+    var statusText: String {
+        switch presentationState {
+        case .preparingModel:
+            return "Loading model..."
+        case .listening:
+            return "Listening..."
+        case .processing:
+            if let activeAIProvider {
+                return "Using \(activeAIProvider.title)..."
+            }
+            return "Processing..."
+        case .done:
+            return "Done!"
+        case .error(let error):
+            return error.message
+        case .hidden:
+            return ""
+        }
+    }
+
+    var accessibilityStatusText: String {
+        switch presentationState {
+        case .preparingModel:
+            return "Loading model"
+        case .listening:
+            return "Listening"
+        case .processing:
+            if let activeAIProvider {
+                return "Using \(activeAIProvider.title)"
+            }
+            return "Processing"
+        case .done:
+            return "Done"
+        case .error(let error):
+            return error.message
+        case .hidden:
+            return "VoiceFlow overlay hidden"
+        }
     }
 
     func updateAudioLevel(_ level: Float) {
@@ -43,14 +84,27 @@ final class RecordingOverlayModel {
 
     func showProcessingState() {
         presentationState = .processing
+        activeAIProvider = nil
+    }
+
+    func showAIProcessingState(provider: AIProvider) {
+        presentationState = .processing
+        activeAIProvider = provider
+    }
+
+    func showInjectingState() {
+        presentationState = .processing
+        activeAIProvider = nil
     }
 
     func showDoneState() {
         presentationState = .done
+        activeAIProvider = nil
     }
 
     func showErrorState(_ error: AppError) {
         presentationState = .error(error)
+        activeAIProvider = nil
     }
 
     func resetDoneState() {
@@ -61,6 +115,7 @@ final class RecordingOverlayModel {
 
     func hide() {
         presentationState = .hidden
+        activeAIProvider = nil
     }
 }
 
@@ -84,7 +139,7 @@ struct RecordingOverlayView: View {
                         Color.clear.frame(width: 0, height: 20)
                     }
 
-                    Text(label)
+                    Text(model.statusText)
                         .font(.system(size: 12.5, weight: .medium, design: .default))
                         .foregroundStyle(Color.white.opacity(0.94))
                         .lineLimit(1)
@@ -108,7 +163,7 @@ struct RecordingOverlayView: View {
         .frame(width: 270, height: 58)
         .animation(.easeInOut(duration: 0.15), value: model.presentationState)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(accessibilityLabel)
+        .accessibilityLabel(model.accessibilityStatusText)
     }
 
     private var showsWaveform: Bool {
@@ -153,27 +208,7 @@ struct RecordingOverlayView: View {
         }
     }
 
-    private var label: String {
-        switch model.presentationState {
-        case .preparingModel: "Loading model..."
-        case .listening: "Listening..."
-        case .processing: "Processing..."
-        case .done: "Done!"
-        case .error(let error): error.message
-        case .hidden: ""
-        }
-    }
 
-    private var accessibilityLabel: String {
-        switch model.presentationState {
-        case .preparingModel: "Loading model"
-        case .listening: "Listening"
-        case .processing: "Processing"
-        case .done: "Done"
-        case .error(let error): error.message
-        case .hidden: "VoiceFlow overlay hidden"
-        }
-    }
 }
 
 private extension AppError {

@@ -141,7 +141,13 @@ final class ClaudeClientTests: XCTestCase {
             claudeProcessor: processor
         )
         let callback = expectation(description: "Claude response callback")
+        let providerCallback = expectation(description: "Claude provider callback")
         var receivedText = ""
+        var receivedProvider: AIProvider?
+        coordinator.onAIProcessingStarted = { provider in
+            receivedProvider = provider
+            providerCallback.fulfill()
+        }
         coordinator.onTranscriptionComplete = { text, _ in
             receivedText = text
             callback.fulfill()
@@ -152,9 +158,10 @@ final class ClaudeClientTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: audioURL) }
 
         await coordinator.transcribe(audioURL: audioURL, targetApp: nil)
-        await fulfillment(of: [callback], timeout: 1)
+        await fulfillment(of: [callback, providerCallback], timeout: 1)
 
         XCTAssertEqual(receivedText, "Summarized note")
+        XCTAssertEqual(receivedProvider, .claude)
         XCTAssertEqual(client.receivedPrompt, "summarize this note")
         XCTAssertEqual(stateManager.currentState, .injecting)
     }

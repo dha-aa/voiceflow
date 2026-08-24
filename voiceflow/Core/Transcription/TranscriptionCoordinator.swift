@@ -14,6 +14,7 @@ final class TranscriptionCoordinator {
     private let claudeProcessor: ClaudeCommandProcessor
 
     var onTranscriptionComplete: ((String, NSRunningApplication?) -> Void)?
+    var onAIProcessingStarted: ((AIProvider) -> Void)?
 
     init(
         stateManager: AppStateManager,
@@ -48,6 +49,9 @@ final class TranscriptionCoordinator {
                 throw TranscriptionEngine.TranscriptionEngineError.noAudioDetected
             }
 
+            if let provider = claudeProcessor.requestedProvider(for: processedText) {
+                onAIProcessingStarted?(provider)
+            }
             let finalText = try await claudeProcessor.processIfRequested(processedText) ?? processedText
             guard !finalText.isEmpty else {
                 VoiceFlowLog.pipeline.error("transcription_processing_failed audio_id=\(audioID, privacy: .public) reason=empty_final_text")

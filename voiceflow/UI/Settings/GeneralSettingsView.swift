@@ -85,6 +85,7 @@ struct GeneralSettingsView: View {
 
         }
         .formStyle(.grouped)
+        .toggleStyle(.switch)
         .padding(24)
         .navigationTitle("General")
 

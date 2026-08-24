@@ -176,6 +176,12 @@ final class OverlayWindowController {
         }
     }
 
+    func showAIProcessing(for provider: AIProvider) {
+        guard shouldShowOverlay else { return }
+        overlayModel.showAIProcessingState(provider: provider)
+        showPanel()
+    }
+
     func showOverlay() {
         guard shouldShowOverlay else { return }
         showPanel()

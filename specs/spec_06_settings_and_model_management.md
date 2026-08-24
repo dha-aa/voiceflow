@@ -72,7 +72,7 @@ Changing the overlay setting takes effect through `UserDefaults.didChangeNotific
 
 Claude API keys are saved only through the provider-neutral `KeychainAPIKeyStore`, using a provider-specific Keychain account (`anthropic-api-key` for Claude). After saving, the AI pane shows a fixed masked value and `Configured` status, with explicit `Change API Key` and `Remove API Key` controls. The stored secret is never displayed or copied into UserDefaults. Claude’s custom command prefix defaults to `Claude`, is persisted in `aiCommandPrefix`, and may be any non-empty word or phrase. Claude’s model can be entered manually or refreshed through the user-triggered **Fetch available models** action, which calls Anthropic’s authenticated `GET /v1/models` endpoint and presents the returned model IDs/display names. The last successful list is kept in view; a refresh failure does not erase the manually selected model. ChatGPT has no active key, model-list request, or generation path yet and must be presented as coming soon rather than as an operational provider.
 
-A Claude command is eligible for routing only when Claude commands are enabled, Claude is the selected provider, and the locally processed transcript begins with the configured prefix. Matching is case-insensitive and requires a word boundary after the prefix; optional punctuation and whitespace are removed from the remainder. The existing transcription coordinator continues to perform local WhisperKit transcription first, then routes the remaining text through the selected Claude model before handing the final text to injection.
+A Claude command is eligible for routing only when Claude commands are enabled, Claude is the selected provider, and the locally processed transcript begins with the configured prefix. Matching is case-insensitive and requires a word boundary after the prefix; optional punctuation and whitespace are removed from the remainder. When this route is active, the overlay changes its processing status to `Using Claude...`; a future provider route must use the corresponding provider title. The existing transcription coordinator continues to perform local WhisperKit transcription first, then routes the remaining text through the selected Claude model before handing the final text to injection.
 
 ## 5. Models pane
 
@@ -151,7 +151,8 @@ Manual verification must confirm:
 17. Active-model deletion is blocked; inactive deletion requires confirmation.
 18. Selecting a different installed model triggers replacement/preload before the next recording.
 19. About shows correct metadata and links.
-20. The core TextEdit pipeline and overlay remain regression-free.
+20. All General and AI toggles retain the native switch appearance after repeated Settings-window reopenings.
+21. The core TextEdit pipeline and overlay remain regression-free.
 
 ## 9. Acceptance criteria
 
@@ -160,7 +161,7 @@ Manual verification must confirm:
 - The window reopens at its intended 760×500 content size with the 680×420 minimum.
 - Launch-at-login uses `SMAppService.mainApp` and displays actionable errors.
 - Overlay preference defaults true and persists; completion sound defaults false and persists with Tink/Pop/Glass selection.
-- The AI pane defaults to Claude, Claude commands default to disabled, Claude uses a Keychain-stored API key with masked Configured/Change/Remove UX, exposes a persisted custom prefix and editable or fetched model choice, and routes only the configured-prefix remainder. ChatGPT is visibly future work and makes no request.
+- The AI pane defaults to Claude, Claude commands default to disabled, Claude uses a Keychain-stored API key with masked Configured/Change/Remove UX, exposes a persisted custom prefix and editable or fetched model choice, and routes only the configured-prefix remainder. The overlay identifies the active provider while the request is in progress. ChatGPT is visibly future work and makes no request.
 - Models are supplied by the live catalog and are not hardcoded in the UI.
 - Only preflight-valid, optionally real-load-validated models appear installed.
 - Download progress and cancellation survive navigation away from the Models pane.
