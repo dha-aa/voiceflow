@@ -85,6 +85,18 @@ struct ClaudeCommandProcessor {
         self.userDefaults = userDefaults
     }
 
+    func requestedProvider(for text: String) -> AIProvider? {
+        guard ClaudeSettings.isEnabled(in: userDefaults),
+              AISettings.selectedProvider(in: userDefaults) == .claude,
+              AICommand.parse(
+                text,
+                prefix: AISettings.commandPrefix(in: userDefaults)
+              ) != nil else {
+            return nil
+        }
+        return .claude
+    }
+
     func processIfRequested(_ text: String) async throws -> String? {
         guard ClaudeSettings.isEnabled(in: userDefaults),
               AISettings.selectedProvider(in: userDefaults) == .claude,
