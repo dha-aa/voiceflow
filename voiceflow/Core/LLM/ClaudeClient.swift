@@ -57,9 +57,8 @@ enum ClaudeSettings {
     static let legacyModelKey = AISettings.legacyClaudeModelKey
     static let defaultModel = AISettings.defaultClaudeModel
 
-    static let grammarCorrectionSystemPrompt = """
-    You are a grammar and punctuation correction engine. Correct only the user's text. Preserve the original meaning, wording, tone, and information as much as possible. Fix grammar, spelling, capitalization, and punctuation only. Do not rewrite, paraphrase, summarize, explain, add information, remove information, add quotes, use Markdown, or include commentary. Return only the corrected text, ready for direct insertion.
-    """
+    static let commandSystemPrompt = "Return only the final content requested, ready to paste. Preserve the user’s intent. No explanations, filler, or unrequested information. Keep requested code, commands, lists, and line breaks valid."
+    static let grammarCorrectionSystemPrompt = "Correct grammar, spelling, capitalization, punctuation, and obvious transcription errors only. Preserve meaning, wording, tone, and information. Return only the corrected text; no explanations, rewriting, Markdown, quotes, or added content."
 
     static func isEnabled(in defaults: UserDefaults = .standard) -> Bool {
         defaults.object(forKey: enabledKey) as? Bool ?? false
@@ -154,7 +153,7 @@ struct ClaudeCommandProcessor {
                 prompt: command.prompt,
                 apiKey: apiKey,
                 model: model,
-                systemPrompt: nil
+                systemPrompt: ClaudeSettings.commandSystemPrompt
             )
             let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else {

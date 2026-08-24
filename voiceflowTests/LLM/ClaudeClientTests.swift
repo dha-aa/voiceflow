@@ -91,7 +91,7 @@ final class ClaudeClientTests: XCTestCase {
         XCTAssertEqual(result, "Claude answer")
         XCTAssertEqual(client.callCount, 1)
         XCTAssertEqual(client.receivedPrompt, "explain how this code works")
-        XCTAssertNil(client.receivedSystemPrompt)
+        XCTAssertEqual(client.receivedSystemPrompt, ClaudeSettings.commandSystemPrompt)
     }
 
     func test_aiPrefixRoutesWithoutGrammarFix() async throws {
@@ -109,7 +109,7 @@ final class ClaudeClientTests: XCTestCase {
 
         XCTAssertEqual(result, "Claude answer")
         XCTAssertEqual(client.receivedPrompt, "explain this")
-        XCTAssertNil(client.receivedSystemPrompt)
+        XCTAssertEqual(client.receivedSystemPrompt, ClaudeSettings.commandSystemPrompt)
     }
 
     func test_grammarFixProcessesOnlyNonPrefixedSpeech() async throws {
