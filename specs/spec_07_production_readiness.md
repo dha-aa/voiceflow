@@ -40,7 +40,7 @@ The goal is not to claim that an unsigned artifact has the trust properties of a
 | Entitlements | Non-sandboxed app plus `com.apple.security.device.audio-input = true` |
 | App identity | `LSUIElement = true`, no Dock icon, menu-bar agent |
 | Local inference | WhisperKit 0.18.0, model files under app-owned Application Support storage |
-| Tests | 129 XCTest methods in the current test target after provider-neutral request and screen-context forwarding coverage |
+| Tests | 131 XCTest methods in the current test target after selection-aware request and context-suppression coverage |
 | Privacy | No audio, spoken text, transcript, prompt, response, or injected content in logs; optional Claude requests are explicit and text-only |
 | Protected branch | `main` requires pull requests, approval, and the `CI Quality Gate` status check |
 
@@ -52,7 +52,7 @@ The actual project metadata, entitlements, and resolved dependencies are authori
 
 The monitor uses a 250 ms sustained hold threshold. A short tap generates no recording callbacks. Duplicate down events and Fn-down while the state is not `.idle` are ignored. If the user releases Fn while microphone permission or model readiness is pending, startup is cancelled normally and no false audio completion is emitted. [6] [7]
 
-The current implementation does **not** implement a maximum recording-duration cutoff, debounced 200 ms re-press policy, or a dedicated “microphone level stayed at zero” classifier. Do not document those as implemented. A missing recording URL is mapped to `.noAudioDetected`; silence or whitespace-only transcription is classified by the transcription stage. If a future maximum-duration or silence policy is required, it must be specified and tested as a separate change.
+The current implementation does **not** implement a maximum recording-duration cutoff, debounced 200 ms re-press policy, or a dedicated “microphone level stayed at zero” classifier. Do not document those as implemented. A missing recording URL is mapped to `.noAudioDetected`; silence or whitespace-only transcription is classified by the transcription stage. The recording coordinator preserves the frontmost target application so Accessibility can inspect its focused element after transcription. If a future maximum-duration or silence policy is required, it must be specified and tested as a separate change.
 
 ### Model lifecycle
 
@@ -72,7 +72,7 @@ Screen Recording is currently informational only. VoiceFlow does not request it 
 
 ### Transcription
 
-The transcription coordinator accepts work only while the shared state is `.processing`. Missing files, missing models, load failures, empty output, and runtime failures map to the documented shared errors. `TextProcessor` removes only known `[BLANK_AUDIO]`/`(inaudible)` artifacts and normalizes whitespace; it does not paraphrase or rewrite. The Claude processor checks the configured AI prefix before any Grammar Fix request. When Claude commands are enabled, Claude is selected, and the processed transcript begins with the persisted custom prefix, only the remaining text is sent to Anthropic over HTTPS; the returned text replaces the local transcript before injection. Matching is case-insensitive and rejects an embedded prefix inside another word. If no AI prefix matches and Grammar Fix is enabled, the complete ordinary transcript is sent to Claude with a correction-only system prompt. If both routes are disabled, normal dictation remains local.
+The transcription coordinator accepts work only while the shared state is `.processing`. Missing files, missing models, load failures, empty output, and runtime failures map to the documented shared errors. `TextProcessor` removes only known `[BLANK_AUDIO]`/`(inaudible)` artifacts and normalizes whitespace; it does not paraphrase or rewrite. The Claude processor checks the configured AI prefix before any Grammar Fix request. When Claude commands are enabled, Claude is selected, and the processed transcript begins with the persisted custom prefix, only the remaining instruction is sent to Anthropic over HTTPS. If the preserved target application exposes a non-empty focused selection through Accessibility, the request includes only that selected text plus the instruction, and the existing Accessibility injection path replaces that same selection with the result. A selected text request never invokes the broader screen-context provider. Matching is case-insensitive and rejects an embedded prefix inside another word. If no selection is available, the request falls back to the ordinary instruction plus any explicitly supplied future context. If no AI prefix matches and Grammar Fix is enabled, the complete ordinary transcript is sent to Claude with a correction-only system prompt. If both routes are disabled, normal dictation remains local.
 
 ### Injection
 
@@ -84,7 +84,7 @@ Successful injection transitions through `.completed` and then `.idle` after app
 
 ### Overlay and Settings
 
-The overlay is a non-activating 270×58 pt panel with a 252×48 pt single black capsule, no native panel shadow, and no outer backing/border artifact. `.preparingModel` displays Loading model; `.recording` displays Listening; ordinary `.processing` and `.injecting` display Processing; an explicit AI request displays `Using Claude...` or the corresponding provider title before the response completes; `.completed` displays Done for about 400 ms; errors display a short message. Settings navigation uses explicit buttons, model download progress survives tab changes, active-model deletion is blocked, and the Settings window resets to its intended size when reopened. The Settings window contains General, AI, Models, and About panes. The AI pane persists the selected provider, per-provider model IDs, custom command prefix, and Grammar Fix setting; stores Claude credentials only in Keychain; shows a masked Configured state with Change/Remove controls; and lets the user refresh Claude’s model list through the authenticated provider API. The provider-neutral AI request contract carries processing mode, selected model, compact prompt mode, and optional screen context. ChatGPT is represented as future UI only and has no active request path. [12] [13] [14] [15]
+The overlay is a non-activating 270×58 pt panel with a 252×48 pt single black capsule, no native panel shadow, and no outer backing/border artifact. `.preparingModel` displays Loading model; `.recording` displays Listening; ordinary `.processing` and `.injecting` display Processing; an explicit AI request displays `Using Claude...` or the corresponding provider title before the response completes; `.completed` displays Done for about 400 ms; errors display a short message. Settings navigation uses explicit buttons, model download progress survives tab changes, active-model deletion is blocked, and the Settings window resets to its intended size when reopened. The Settings window contains General, AI, Models, and About panes. The AI pane persists the selected provider, per-provider model IDs, custom command prefix, and Grammar Fix setting; stores Claude credentials only in Keychain; shows a masked Configured state with Change/Remove controls; and lets the user refresh Claude’s model list through the authenticated provider API. The provider-neutral AI request contract carries processing mode, selected model, selected text, compact prompt mode, and optional screen context. ChatGPT is represented as future UI only and has no active request path. [12] [13] [14] [15]
 
 ## 4. Privacy and security requirements
 
@@ -219,7 +219,7 @@ This guidance does not bypass macOS security silently and does not claim that th
 
 ## 11. Tests and final verification
 
-The current repository contains 129 XCTest methods distributed across state, audio, transcription, injection, overlay, Settings, LLM, onboarding, package-import, and baseline tests. The complete test target is the primary regression gate. [22]
+The current repository contains 131 XCTest methods distributed across state, audio, transcription, injection, overlay, Settings, LLM, onboarding, package-import, and baseline tests. The complete test target is the primary regression gate. [22]
 
 Final verification must include:
 
@@ -240,7 +240,7 @@ Final verification must include:
 - No dedicated lint/format tool is claimed unless one is actually configured; current repository quality checks remain documented.
 - Privacy-safe logging contains no audio, speech, transcript, Claude prompt, Claude response, API key, or injected text.
 - First-launch onboarding explains the workflow and each current permission before requesting it, allows skip/denial recovery, and exposes unresolved permission recovery in General Settings. Screen Recording is explicitly not requested until screen-context AI exists.
-- Optional Claude processing is disabled by default, uses a Keychain-stored user key, shows only a masked Configured state after saving, sends only the remainder after the persisted custom prefix, uses the configured Claude model, and returns failures to a recoverable state. Grammar Fix is independently opt-in, uses a correction-only system prompt, sends the complete ordinary transcript only when no AI prefix matches, and never runs before AI-prefix detection.
+- Optional Claude processing is disabled by default, uses a Keychain-stored user key, shows only a masked Configured state after saving, sends only the remainder after the persisted custom prefix, uses the configured Claude model, and returns failures to a recoverable state. When selected text is available, it sends only that selection plus the instruction and replaces the selected range with the result; it does not invoke broad screen context. With no selection, it uses the ordinary instruction and any explicitly supplied future context. Grammar Fix is independently opt-in, uses a correction-only system prompt, sends the complete ordinary transcript only when no AI prefix matches, and never runs before AI-prefix detection.
 - AI settings persist the selected provider, per-provider model, custom prefix, and Grammar Fix preference. Claude model refresh uses the authenticated Models API; ChatGPT remains explicitly unimplemented and makes no request.
 - Provider implementations use the shared AI request and prompt-mode contract. Optional screen context is passed only through an explicit future context provider; the current app captures no screen content.
 - Known edge cases are mapped to safe errors or explicitly recorded as current limitations.

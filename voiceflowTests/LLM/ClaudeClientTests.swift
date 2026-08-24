@@ -186,6 +186,54 @@ final class ClaudeClientTests: XCTestCase {
         XCTAssertEqual(client.request?.systemPrompt, AIPromptBuilder.grammarFix)
     }
 
+    func test_selectedTextIsForwardedAndScreenContextIsNotRequested() async throws {
+        let defaults = UserDefaults(suiteName: "claude-selection-context-\(UUID().uuidString)")!
+        defaults.set(true, forKey: ClaudeSettings.enabledKey)
+        let client = TestAIProviderClient(response: "Shorter result")
+        let selectionReader = TestFocusedTextSelectionReader(selectedText: "This is a very long paragraph.")
+        var screenContextProviderCallCount = 0
+        let processor = ClaudeCommandProcessor(
+            providerClient: client,
+            keyStore: TestClaudeAPIKeyStore(apiKey: "test-key"),
+            userDefaults: defaults,
+            screenContextProvider: {
+                screenContextProviderCallCount += 1
+                return AIScreenContext(summary: "The entire screen must not be used.")
+            },
+            selectedTextReader: selectionReader
+        )
+
+        let result = try await processor.processIfRequested("Claude make this shorter")
+
+        XCTAssertEqual(result, "Shorter result")
+        XCTAssertEqual(client.request?.text, "make this shorter")
+        XCTAssertEqual(client.request?.selectedText, "This is a very long paragraph.")
+        XCTAssertNil(client.request?.screenContext)
+        XCTAssertTrue(client.request?.systemPrompt.contains(AIPromptBuilder.selectionContext) == true)
+        XCTAssertEqual(screenContextProviderCallCount, 0)
+    }
+
+    func test_screenContextIsFallbackWhenNoTextIsSelected() async throws {
+        let defaults = UserDefaults(suiteName: "claude-selection-fallback-\(UUID().uuidString)")!
+        defaults.set(true, forKey: ClaudeSettings.enabledKey)
+        let client = TestAIProviderClient(response: "Contextual result")
+        let processor = ClaudeCommandProcessor(
+            providerClient: client,
+            keyStore: TestClaudeAPIKeyStore(apiKey: "test-key"),
+            userDefaults: defaults,
+            screenContextProvider: {
+                AIScreenContext(summary: "The active app is a code editor.")
+            },
+            selectedTextReader: TestFocusedTextSelectionReader(selectedText: nil)
+        )
+
+        _ = try await processor.processIfRequested("Claude explain this")
+
+        XCTAssertNil(client.request?.selectedText)
+        XCTAssertEqual(client.request?.screenContext?.summary, "The active app is a code editor.")
+        XCTAssertTrue(client.request?.systemPrompt.contains(AIPromptBuilder.screenContext) == true)
+    }
+
     func test_processorRejectsClaudeCommandWithoutAPIKey() async {
         let defaults = UserDefaults(suiteName: "claude-no-key-\(UUID().uuidString)")!
         defaults.set(true, forKey: ClaudeSettings.enabledKey)
@@ -317,6 +365,18 @@ private final class TestAIProviderClient: AIProviderClient {
     func complete(request: AIProcessingRequest, apiKey: String) async throws -> String {
         self.request = request
         return response
+    }
+}
+
+private final class TestFocusedTextSelectionReader: FocusedTextSelectionReading {
+    let selectedText: String?
+
+    init(selectedText: String?) {
+        self.selectedText = selectedText
+    }
+
+    func selectedText(in targetApp: NSRunningApplication?) throws -> String? {
+        selectedText
     }
 }
 

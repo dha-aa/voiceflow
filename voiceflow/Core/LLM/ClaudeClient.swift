@@ -5,6 +5,7 @@
 //  Claude BYOK integration for explicit voice commands.
 //
 
+import AppKit
 import Foundation
 import OSLog
 import Security
@@ -88,29 +89,34 @@ struct ClaudeCommandProcessor {
     private let keyStore: ClaudeAPIKeyStore
     private let userDefaults: UserDefaults
     private let screenContextProvider: () -> AIScreenContext?
+    private let selectedTextReader: FocusedTextSelectionReading?
 
     init(
         apiClient: ClaudeAPIClient = LiveClaudeAPIClient(),
         keyStore: ClaudeAPIKeyStore = KeychainClaudeAPIKeyStore(),
         userDefaults: UserDefaults = .standard,
-        screenContextProvider: @escaping () -> AIScreenContext? = { nil }
+        screenContextProvider: @escaping () -> AIScreenContext? = { nil },
+        selectedTextReader: FocusedTextSelectionReading? = nil
     ) {
         self.providerClient = ClaudeAIProviderClient(transport: apiClient)
         self.keyStore = keyStore
         self.userDefaults = userDefaults
         self.screenContextProvider = screenContextProvider
+        self.selectedTextReader = selectedTextReader
     }
 
     init(
         providerClient: AIProviderClient,
         keyStore: ClaudeAPIKeyStore = KeychainClaudeAPIKeyStore(),
         userDefaults: UserDefaults = .standard,
-        screenContextProvider: @escaping () -> AIScreenContext? = { nil }
+        screenContextProvider: @escaping () -> AIScreenContext? = { nil },
+        selectedTextReader: FocusedTextSelectionReading? = nil
     ) {
         self.providerClient = providerClient
         self.keyStore = keyStore
         self.userDefaults = userDefaults
         self.screenContextProvider = screenContextProvider
+        self.selectedTextReader = selectedTextReader
     }
 
     func requestedProvider(for text: String) -> AIProvider? {
@@ -129,7 +135,10 @@ struct ClaudeCommandProcessor {
         )
     }
 
-    func processTranscribedText(_ text: String) async throws -> String? {
+    func processTranscribedText(
+        _ text: String,
+        targetApp: NSRunningApplication? = nil
+    ) async throws -> String? {
         guard AISettings.selectedProvider(in: userDefaults) == .claude else {
             return nil
         }
@@ -137,7 +146,7 @@ struct ClaudeCommandProcessor {
         // Explicit AI commands always win. Grammar correction must never edit
         // or reinterpret a command before its provider receives it.
         if let _ = requestedCommand(in: text) {
-            return try await processIfRequested(text)
+            return try await processIfRequested(text, targetApp: targetApp)
         }
 
         guard ClaudeSettings.isGrammarFixEnabled(in: userDefaults) else {
@@ -146,7 +155,10 @@ struct ClaudeCommandProcessor {
         return try await correctGrammar(text)
     }
 
-    func processIfRequested(_ text: String) async throws -> String? {
+    func processIfRequested(
+        _ text: String,
+        targetApp: NSRunningApplication? = nil
+    ) async throws -> String? {
         guard ClaudeSettings.isEnabled(in: userDefaults),
               AISettings.selectedProvider(in: userDefaults) == .claude,
               let command = AICommand.parse(
@@ -161,15 +173,18 @@ struct ClaudeCommandProcessor {
         }
 
         let model = AISettings.selectedModel(for: .claude, in: userDefaults)
+        let selectedText = readSelectedText(in: targetApp)
+        let screenContext = selectedText == nil ? screenContextProvider() : nil
         let startedAt = Date()
-        VoiceFlowLog.llm.info("claude_request_started model_id=\(model, privacy: .public) prompt_character_count=\(command.prompt.count, privacy: .public)")
+        VoiceFlowLog.llm.info("claude_request_started model_id=\(model, privacy: .public) prompt_character_count=\(command.prompt.count, privacy: .public) selection_present=\(selectedText != nil, privacy: .public)")
         do {
             let response = try await providerClient.complete(
                 request: AIProcessingRequest(
                     text: command.prompt,
                     mode: .command,
                     model: model,
-                    screenContext: screenContextProvider()
+                    selectedText: selectedText,
+                    screenContext: screenContext
                 ),
                 apiKey: apiKey
             )
@@ -221,6 +236,11 @@ struct ClaudeCommandProcessor {
             VoiceFlowLog.llm.error("claude_grammar_request_failed model_id=\(model, privacy: .public) category=runtime duration_seconds=\(Date().timeIntervalSince(startedAt), privacy: .public)")
             throw ClaudeCommandError.requestFailed
         }
+    }
+
+    private func readSelectedText(in targetApp: NSRunningApplication?) -> String? {
+        guard let selectedTextReader else { return nil }
+        return try? selectedTextReader.selectedText(in: targetApp)
     }
 
     private func configuredAPIKey() throws -> String {

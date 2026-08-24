@@ -18,7 +18,11 @@ protocol TextInjecting: AnyObject {
     func inject(text: String, into targetApp: NSRunningApplication?) throws
 }
 
-final class TextInjector: TextInjecting {
+protocol FocusedTextSelectionReading: AnyObject {
+    func selectedText(in targetApp: NSRunningApplication?) throws -> String?
+}
+
+final class TextInjector: TextInjecting, FocusedTextSelectionReading {
     private let keyboardEventPoster: KeyboardEventPosting
     private let permissionChecker: () -> Bool
     private let permissionRequester: () -> Void
@@ -44,6 +48,32 @@ final class TextInjector: TextInjecting {
 
     func requestAccessibilityPermission() {
         permissionRequester()
+    }
+
+    func selectedText(in targetApp: NSRunningApplication?) throws -> String? {
+        guard let targetApp else {
+            throw TextInjectionError.targetApplicationUnavailable
+        }
+        guard targetApp.processIdentifier > 0 else {
+            throw TextInjectionError.targetApplicationUnavailable
+        }
+        guard isAccessibilityPermissionGranted else {
+            requestAccessibilityPermission()
+            throw TextInjectionError.accessibilityPermissionDenied
+        }
+
+        let focusedElement = try focusedElement(in: targetApp)
+        var selectedValue: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(
+            focusedElement,
+            kAXSelectedTextAttribute as CFString,
+            &selectedValue
+        )
+        guard result == .success,
+              let selectedText = selectedValue as? String else {
+            return nil
+        }
+        return selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : selectedText
     }
 
     func inject(text: String, into targetApp: NSRunningApplication?) throws {
@@ -102,18 +132,7 @@ final class TextInjector: TextInjecting {
             throw TextInjectionError.accessibilityPermissionDenied
         }
 
-        let applicationElement = AXUIElementCreateApplication(targetApp.processIdentifier)
-        var focusedValue: CFTypeRef?
-        let focusedResult = AXUIElementCopyAttributeValue(
-            applicationElement,
-            kAXFocusedUIElementAttribute as CFString,
-            &focusedValue
-        )
-        guard focusedResult == .success, let focusedValue else {
-            throw TextInjectionError.focusedElementUnavailable(status: focusedResult)
-        }
-
-        let focusedElement = focusedValue as! AXUIElement
+        let focusedElement = try focusedElement(in: targetApp)
         var currentValue: CFTypeRef?
         let valueResult = AXUIElementCopyAttributeValue(
             focusedElement,
@@ -151,6 +170,20 @@ final class TextInjector: TextInjecting {
                 caretValue
             )
         }
+    }
+
+    private func focusedElement(in targetApp: NSRunningApplication) throws -> AXUIElement {
+        let applicationElement = AXUIElementCreateApplication(targetApp.processIdentifier)
+        var focusedValue: CFTypeRef?
+        let focusedResult = AXUIElementCopyAttributeValue(
+            applicationElement,
+            kAXFocusedUIElementAttribute as CFString,
+            &focusedValue
+        )
+        guard focusedResult == .success, let focusedValue else {
+            throw TextInjectionError.focusedElementUnavailable(status: focusedResult)
+        }
+        return focusedValue as! AXUIElement
     }
 
     private func selectedTextRange(

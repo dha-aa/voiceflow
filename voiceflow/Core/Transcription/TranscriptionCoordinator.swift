@@ -52,7 +52,10 @@ final class TranscriptionCoordinator {
             if let provider = claudeProcessor.requestedProvider(for: processedText) {
                 onAIProcessingStarted?(provider)
             }
-            let finalText = try await claudeProcessor.processTranscribedText(processedText) ?? processedText
+            let finalText = try await claudeProcessor.processTranscribedText(
+                processedText,
+                targetApp: targetApp
+            ) ?? processedText
             guard !finalText.isEmpty else {
                 VoiceFlowLog.pipeline.error("transcription_processing_failed audio_id=\(audioID, privacy: .public) reason=empty_final_text")
                 throw TranscriptionEngine.TranscriptionEngineError.noAudioDetected

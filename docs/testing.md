@@ -12,7 +12,7 @@ Testing requires a Mac with macOS 14 or later and the full Xcode installation. T
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 ```
 
-The current automated baseline is **129 XCTest tests with zero failures**. Tests that require microphone, Accessibility, a live WhisperKit model, or another application are supplemented by manual verification rather than being made dependent on a particular user machine.
+The current automated baseline is **131 XCTest tests with zero failures**. Tests that require microphone, Accessibility, a live WhisperKit model, or another application are supplemented by manual verification rather than being made dependent on a particular user machine.
 
 ## Automated XCTest suite
 
@@ -35,7 +35,7 @@ xcodebuild \
 A successful run ends with output similar to:
 
 ```text
-Executed 129 tests, with 0 failures
+Executed 131 tests, with 0 failures
 ** TEST SUCCEEDED **
 ```
 
@@ -91,7 +91,7 @@ xcodebuild \
 | Injection coordination | Processing/injecting/completed transitions, successful completion sound selection, disabled sound behavior, and no sound on failures. |
 | Overlay UI | Loading model, Listening, Processing, provider-specific `Using Claude...`/`Using ChatGPT...` labels, Done, error states, animation cancellation, and approximately 400 ms completion dismissal. |
 | Settings UI | General, AI, Models, and About navigation; overlay visibility; completion sound defaults and persistence; model selection; download progress across tabs; model actions; Claude enablement; Grammar Fix toggle; provider/model persistence; custom-prefix persistence; Claude model-list decoding; masked Configured API-key status; Change/Remove controls; and microphone/Accessibility permission recovery. |
-| Claude routing | Configurable word/phrase prefix parsing, case-insensitive matching, boundary protection, normal-dictation bypass, compact mode-specific prompt forwarding, optional screen-context forwarding, missing-key handling, request response handling, coordinator routing, and Grammar Fix precedence. |
+| Claude routing | Configurable word/phrase prefix parsing, case-insensitive matching, boundary protection, normal-dictation bypass, compact mode-specific prompt forwarding, selected-text forwarding, broad-context suppression when a selection exists, no-selection fallback, optional screen-context forwarding, missing-key handling, request response handling, coordinator routing, and Grammar Fix precedence. |
 | Menu-bar UI | State-dependent icon selection and native template rendering behavior. |
 
 Test doubles are used for system services so the deterministic suite does not require a physical microphone, a live Accessibility grant, or a downloaded WhisperKit model. This makes failures attributable to VoiceFlow logic rather than the local machine’s permissions or network state.

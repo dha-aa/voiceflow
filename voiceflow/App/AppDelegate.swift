@@ -46,14 +46,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         modelManager.onModelSelectionChanged = { [weak transcriptionEngine] _ in
             transcriptionEngine?.modelSelectionDidChange()
         }
+        let textInjector = TextInjector()
         let transcriptionCoordinator = TranscriptionCoordinator(
             stateManager: stateManager,
             engine: transcriptionEngine,
-            processor: TextProcessor()
+            processor: TextProcessor(),
+            claudeProcessor: ClaudeCommandProcessor(selectedTextReader: textInjector)
         )
         let injectionCoordinator = InjectionCoordinator(
             stateManager: stateManager,
-            injector: TextInjector()
+            injector: textInjector
         )
         let audioRecorder = AudioRecorder()
         let recordingCoordinator = RecordingCoordinator(
