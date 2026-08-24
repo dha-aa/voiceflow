@@ -13,9 +13,9 @@ struct ModelsSettingsView: View {
     @Bindable var speechRecognitionSettings: SpeechRecognitionSettings
     @Bindable var parakeetModelManager: ParakeetModelManager
     @State private var pendingDeletion: WhisperModel?
+    @State private var pendingFluidAudioDeletion: ParakeetModelVariant?
     @State private var showingActiveModelAlert = false
     @State private var errorMessage: String?
-    @State private var isRefreshing = false
     @State private var isImporting = false
     @State private var showingModelImporter = false
 
@@ -31,7 +31,7 @@ struct ModelsSettingsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            if isRefreshing || modelManager.isLoading {
+            if modelManager.isRefreshing {
                 ProgressView("Refreshing model catalog...")
                     .controlSize(.small)
                     .padding(.top, 12)
@@ -45,7 +45,7 @@ struct ModelsSettingsView: View {
         .padding(24)
         .navigationTitle("Models")
         .task {
-            if modelManager.availableModels.isEmpty && !downloadCoordinator.isDownloading {
+            if modelManager.availableModels.isEmpty && !downloadCoordinator.isDownloading && !modelManager.isRefreshing {
                 refreshModels()
             }
         }
@@ -70,6 +70,19 @@ struct ModelsSettingsView: View {
             }
         } message: { model in
             Text("Delete \(model.displayName) from this Mac? This cannot be undone.")
+        }
+        .alert("Delete FluidAudio model?", isPresented: fluidAudioDeleteAlertBinding) {
+            Button("Delete", role: .destructive) {
+                if let variant = pendingFluidAudioDeletion {
+                    delete(variant)
+                }
+                pendingFluidAudioDeletion = nil
+            }
+            Button("Cancel", role: .cancel) {
+                pendingFluidAudioDeletion = nil
+            }
+        } message: {
+            Text("Delete this FluidAudio model from this Mac? This cannot be undone.")
         }
         .alert("Active model cannot be deleted", isPresented: $showingActiveModelAlert) {
             Button("OK", role: .cancel) {}
@@ -105,7 +118,7 @@ struct ModelsSettingsView: View {
             }
             .buttonStyle(.bordered)
             .help("Import a WhisperKit Core ML model folder")
-            .disabled(isImporting || isRefreshing || downloadCoordinator.isDownloading)
+            .disabled(isImporting || modelManager.isRefreshing || downloadCoordinator.isDownloading)
             Button {
                 refreshModels()
             } label: {
@@ -113,7 +126,7 @@ struct ModelsSettingsView: View {
             }
             .buttonStyle(.borderless)
             .help("Refresh available WhisperKit models")
-            .disabled(isRefreshing || downloadCoordinator.isDownloading)
+            .disabled(modelManager.isRefreshing || downloadCoordinator.isDownloading)
         }
         .padding(.bottom, 12)
     }
@@ -151,6 +164,10 @@ struct ModelsSettingsView: View {
         engine == .whisperKit
     }
 
+    static func showsFluidAudioDelete(isDownloaded: Bool) -> Bool {
+        isDownloaded
+    }
+
     @ViewBuilder
     private var providerModelsList: some View {
         if Self.showsWhisperModels(for: speechRecognitionSettings.selectedEngine) {
@@ -183,12 +200,31 @@ struct ModelsSettingsView: View {
                     onCancel: {
                         parakeetModelManager.cancelDownload()
                     },
-                    onOpenFolder: {
-                        NSWorkspace.shared.open(ParakeetModelManager.modelDirectory(for: variant))
+                    onDelete: {
+                        requestDelete(variant)
                     }
                 )
                 Divider()
             }
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Model location")
+                        .font(.caption.weight(.semibold))
+                    Spacer()
+                    Button {
+                        NSWorkspace.shared.open(parakeetModelManager.modelDirectory)
+                    } label: {
+                        Label("Open in Finder", systemImage: "folder")
+                    }
+                    .buttonStyle(.borderless)
+                }
+                Text(parakeetModelManager.modelDirectory.path)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+            .padding(.top, 4)
         }
     }
 
@@ -249,6 +285,13 @@ struct ModelsSettingsView: View {
         modelManager.availableModels.filter { !$0.isDownloaded }
     }
 
+    private var fluidAudioDeleteAlertBinding: Binding<Bool> {
+        Binding(
+            get: { pendingFluidAudioDeletion != nil },
+            set: { if !$0 { pendingFluidAudioDeletion = nil } }
+        )
+    }
+
     private var deleteAlertBinding: Binding<Bool> {
         Binding(
             get: { pendingDeletion != nil },
@@ -301,6 +344,18 @@ struct ModelsSettingsView: View {
         }
     }
 
+    private func requestDelete(_ variant: ParakeetModelVariant) {
+        pendingFluidAudioDeletion = variant
+    }
+
+    private func delete(_ variant: ParakeetModelVariant) {
+        do {
+            try parakeetModelManager.delete(variant)
+        } catch {
+            errorMessage = errorDescription(for: error)
+        }
+    }
+
     private func delete(_ model: WhisperModel) {
         do {
             try modelManager.deleteModel(id: model.id)
@@ -345,10 +400,8 @@ struct ModelsSettingsView: View {
     }
 
     private func refreshModels() {
-        guard !isRefreshing, !isImporting, !downloadCoordinator.isDownloading else { return }
-        isRefreshing = true
+        guard !modelManager.isRefreshing, !isImporting, !downloadCoordinator.isDownloading else { return }
         Task { @MainActor in
-            defer { isRefreshing = false }
             do {
                 try await modelManager.refreshModels()
             } catch {
@@ -389,7 +442,7 @@ private struct FluidAudioModelRow: View {
     let onSelect: () -> Void
     let onDownload: () -> Void
     let onCancel: () -> Void
-    let onOpenFolder: () -> Void
+    let onDelete: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
@@ -434,8 +487,8 @@ private struct FluidAudioModelRow: View {
                     Button("Set Active", action: onSelect)
                         .buttonStyle(.bordered)
                 }
-                Button("Open Folder", action: onOpenFolder)
-                    .buttonStyle(.borderless)
+                Button("Delete", role: .destructive, action: onDelete)
+                    .buttonStyle(.bordered)
             } else if isLoading {
                 ProgressView()
                     .controlSize(.small)

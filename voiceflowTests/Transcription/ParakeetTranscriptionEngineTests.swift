@@ -22,6 +22,46 @@ final class ParakeetTranscriptionEngineTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path))
     }
 
+    func test_deleteDownloadedVariantClearsOrUpdatesActiveStateAndNotifiesUI() throws {
+        let baseDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("parakeet-delete-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: baseDirectory) }
+        let suiteName = "parakeet-delete-defaults-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let v3Directory = ParakeetModelManager.modelDirectory(for: .v3, baseDirectory: baseDirectory)
+        let v2Directory = ParakeetModelManager.modelDirectory(for: .v2, baseDirectory: baseDirectory)
+        try FileManager.default.createDirectory(at: v3Directory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: v2Directory, withIntermediateDirectories: true)
+        for name in ["Preprocessor.mlmodelc", "Encoder.mlmodelc", "Decoder.mlmodelc", "JointDecisionv3.mlmodelc"] {
+            try createCompiledBundle(named: name, at: v3Directory)
+        }
+        try Data("{}".utf8).write(to: v3Directory.appendingPathComponent("parakeet_vocab.json"))
+        for name in ["Preprocessor.mlmodelc", "Encoder.mlmodelc", "Decoder.mlmodelc", "JointDecision.mlmodelc"] {
+            try createCompiledBundle(named: name, at: v2Directory)
+        }
+        try Data("{}".utf8).write(to: v2Directory.appendingPathComponent("parakeet_vocab.json"))
+        defaults.set(ParakeetModelVariant.v3.rawValue, forKey: "selectedParakeetModelVariant")
+
+        let manager = ParakeetModelManager(
+            userDefaults: defaults,
+            baseDirectory: baseDirectory
+        )
+        var availabilityNotifications = 0
+        manager.onModelAvailabilityChanged = { availabilityNotifications += 1 }
+
+        try manager.delete(.v3)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: v3Directory.path))
+        XCTAssertEqual(manager.selectedVariant, .v2)
+        XCTAssertEqual(defaults.string(forKey: "selectedParakeetModelVariant"), "v2")
+        XCTAssertTrue(manager.isInstalled)
+        XCTAssertTrue(manager.isActive(.v2))
+        XCTAssertFalse(manager.isActive(.v3))
+        XCTAssertEqual(availabilityNotifications, 1)
+    }
+
     func test_cancelDownloadResetsStateWithoutReportingInstallation() async throws {
         let started = expectation(description: "download started")
         let cancellationObserved = expectation(description: "cancellation observed")

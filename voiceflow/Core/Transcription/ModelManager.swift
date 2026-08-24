@@ -233,6 +233,7 @@ final class ModelManager {
     private(set) var availableModels: [WhisperModel] = []
     private(set) var selectedModelId: String?
     private(set) var isLoading = false
+    private(set) var isRefreshing = false
     var onModelSelectionChanged: ((String) -> Void)?
 
     private let catalog: WhisperKitModelCatalog
@@ -274,8 +275,9 @@ final class ModelManager {
     }
 
     func refreshModels() async throws {
-        isLoading = true
-        defer { isLoading = false }
+        guard !isRefreshing else { return }
+        isRefreshing = true
+        defer { isRefreshing = false }
 
         let remoteModelIDs = try await catalog.fetchAvailableModels(
             from: Self.repository,

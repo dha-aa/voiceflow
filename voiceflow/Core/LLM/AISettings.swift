@@ -203,5 +203,15 @@ final class KeychainAPIKeyStore: ClaudeAPIKeyStore {
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw ClaudeKeychainError.removeFailed(status)
         }
+
+        do {
+            guard try read() == nil else {
+                throw ClaudeKeychainError.removeFailed(errSecDuplicateItem)
+            }
+        } catch let error as ClaudeKeychainError {
+            throw error
+        } catch {
+            throw ClaudeKeychainError.removeFailed(errSecIO)
+        }
     }
 }

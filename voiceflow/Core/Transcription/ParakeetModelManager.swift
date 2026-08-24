@@ -376,14 +376,37 @@ final class ParakeetModelManager: ParakeetModelProviding {
         }
     }
 
-    func delete() throws {
-        guard fileManager.fileExists(atPath: modelDirectory.path) else {
+    func delete(_ variant: ParakeetModelVariant? = nil) throws {
+        let variantToDelete = variant ?? selectedVariant
+        let directory = Self.modelDirectory(for: variantToDelete, baseDirectory: baseDirectory)
+        guard fileManager.fileExists(atPath: directory.path) else {
             throw ParakeetModelError.notInstalled
         }
-        try fileManager.removeItem(at: modelDirectory)
+
+        try fileManager.removeItem(at: directory)
+
+        let deletedSelectedVariant = selectedVariant == variantToDelete
+        if deletedSelectedVariant {
+            let replacement = Self.availableVariants.first {
+                $0 != variantToDelete && Self.validation(
+                    at: Self.modelDirectory(for: $0, baseDirectory: baseDirectory),
+                    variant: $0,
+                    fileManager: fileManager
+                ).isComplete
+            }
+            if let replacement {
+                selectedVariant = replacement
+                userDefaults.set(replacement.rawValue, forKey: Self.selectedVariantKey)
+                onVariantChanged?()
+            } else {
+                userDefaults.removeObject(forKey: Self.selectedVariantKey)
+            }
+        }
+
         refresh()
+        onModelAvailabilityChanged?()
         VoiceFlowLog.model.info(
-            "parakeet_model_deleted variant=\(self.selectedVariant.rawValue, privacy: .public) model_directory=\(self.modelDirectory.path, privacy: .public)"
+            "parakeet_model_deleted variant=\(variantToDelete.rawValue, privacy: .public) model_directory=\(directory.path, privacy: .public) active_selection_updated=\(deletedSelectedVariant, privacy: .public)"
         )
     }
 

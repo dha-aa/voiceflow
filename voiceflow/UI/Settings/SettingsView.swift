@@ -38,9 +38,14 @@ struct SettingsView: View {
     let speechRecognitionSettings: SpeechRecognitionSettings
     let parakeetModelManager: ParakeetModelManager
     @State private var selection: Destination = .general
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
+
+    static func sidebarToggleTitle(isSidebarVisible: Bool) -> String {
+        isSidebarVisible ? "Hide Sidebar" : "Show Sidebar"
+    }
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             List {
                 ForEach(Destination.allCases) { destination in
                     Button {
@@ -69,6 +74,22 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .navigationSplitViewStyle(.balanced)
+        .toolbar(removing: .sidebarToggle)
+        .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.12)) {
+                        columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
+                    }
+                } label: {
+                    Label(
+                        Self.sidebarToggleTitle(isSidebarVisible: columnVisibility != .detailOnly),
+                        systemImage: "sidebar.left"
+                    )
+                }
+                .help(Self.sidebarToggleTitle(isSidebarVisible: columnVisibility != .detailOnly))
+            }
+        }
     }
 
     @ViewBuilder

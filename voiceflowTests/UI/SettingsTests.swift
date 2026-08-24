@@ -24,6 +24,16 @@ final class SettingsNavigationTests: XCTestCase {
         XCTAssertFalse(ModelsSettingsView.showsWhisperModels(for: .parakeet))
     }
 
+    func test_fluidAudioDeleteActionIsAvailableForDownloadedModels() {
+        XCTAssertTrue(ModelsSettingsView.showsFluidAudioDelete(isDownloaded: true))
+        XCTAssertFalse(ModelsSettingsView.showsFluidAudioDelete(isDownloaded: false))
+    }
+
+    func test_settingsSidebarToggleUsesNaturalNavigationPlacement() {
+        XCTAssertEqual(SettingsView.sidebarToggleTitle(isSidebarVisible: true), "Hide Sidebar")
+        XCTAssertEqual(SettingsView.sidebarToggleTitle(isSidebarVisible: false), "Show Sidebar")
+    }
+
     func test_fluidAudioCatalogContainsBothDownloadableVariants() {
         XCTAssertEqual(
             ParakeetModelManager.availableVariants,
@@ -66,6 +76,25 @@ final class GeneralSettingsTests: XCTestCase {
         let defaults = UserDefaults(suiteName: "completion-sound-default-\(UUID().uuidString)")!
 
         XCTAssertFalse(VoiceFlowSettingsDefaults.playCompletionSound(in: defaults))
+    }
+
+    func test_aiFeatures_defaultToOffOnFreshInstallation() {
+        let defaults = UserDefaults(suiteName: "ai-features-default-\(UUID().uuidString)")!
+
+        XCTAssertFalse(ClaudeSettings.isEnabled(in: defaults))
+        XCTAssertFalse(ClaudeSettings.isGrammarFixEnabled(in: defaults))
+        XCTAssertFalse(VoiceFlowSettingsDefaults.playCompletionSound(in: defaults))
+    }
+
+    func test_keychainRemove_deletesTheStoredProviderKey() throws {
+        let service = "voiceflow-keychain-test-\(UUID().uuidString)"
+        let store = KeychainAPIKeyStore(provider: .claude, service: service)
+        try store.save("test-secret")
+        XCTAssertEqual(try store.read(), "test-secret")
+
+        try store.remove()
+
+        XCTAssertNil(try store.read())
     }
 
     func test_playCompletionSound_persistsAfterToggle() {
@@ -140,6 +169,23 @@ final class GeneralSettingsTests: XCTestCase {
 
 @MainActor
 final class ModelsSettingsViewTests: XCTestCase {
+    func test_catalogRefresh_hasDedicatedStateAndClearsAfterFailure() async {
+        let fixture = try! makeFixture()
+        let manager = voiceflow.ModelManager(
+            catalog: FailingRefreshCatalog(),
+            modelsDirectory: fixture.modelsDirectory,
+            userDefaults: UserDefaults(suiteName: fixture.suiteName)!
+        )
+
+        XCTAssertFalse(manager.isRefreshing)
+        do {
+            try await manager.refreshModels()
+            XCTFail("Expected catalog refresh to fail")
+        } catch {
+            XCTAssertFalse(manager.isRefreshing)
+        }
+    }
+
     func test_modelsView_showsInstalledAndAvailableModelsFromManager() async throws {
         let fixture = try makeFixture()
         _ = try makeValidModel(base: fixture.modelsDirectory, variant: "tiny.en")
@@ -363,6 +409,27 @@ private final class RecordingModelLoadValidator: WhisperKitModelLoadValidator {
         if shouldFail {
             throw NSError(domain: "SettingsTests", code: 1)
         }
+    }
+}
+
+private final class FailingRefreshCatalog: WhisperKitModelCatalog {
+    enum Failure: Error { case unavailable }
+
+    func fetchAvailableModels(from repository: String, matching: [String], downloadBase: URL) async throws -> [String] {
+        throw Failure.unavailable
+    }
+
+    func recommendedRemoteModels(from repository: String, downloadBase: URL) async -> ModelSupport {
+        ModelSupport(default: "", supported: [])
+    }
+
+    func download(
+        variant: String,
+        from repository: String,
+        downloadBase: URL,
+        progressCallback: @escaping @Sendable (Progress) -> Void
+    ) async throws -> URL {
+        throw Failure.unavailable
     }
 }
 
