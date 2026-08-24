@@ -179,6 +179,17 @@ The Anthropic API key is stored in the macOS Keychain under the app bundle ident
 
 Claude configuration, missing-key, empty-response, and request failures map to dedicated shared application errors and return the pipeline to a recoverable error state. The response replaces the local transcript before the existing `.injecting` transition and injection callback.
 
+`ClaudeCommandProcessor.processTranscribedText(_:)` applies a deterministic precedence rule. It checks for an eligible configured AI prefix immediately after `TextProcessor` and before any Grammar Fix request. If a prefix matches, it removes the prefix and sends only the remainder to Claude as the user’s AI request; Grammar Fix is not applied first. If no prefix matches and `grammarFixEnabled` is true, it sends the complete processed transcript to Claude with `ClaudeSettings.grammarCorrectionSystemPrompt`, which instructs Claude to correct grammar, spelling, capitalization, and punctuation only and return corrected text without explanations, Markdown, quotes, or additional information. If neither route is enabled, no Claude request is made.
+
+The routing contract is:
+
+| AI prefix match | Grammar Fix | Processing result |
+|---|---|---|
+| Yes | On | AI command route; prefix remainder only; no Grammar Fix request. |
+| Yes | Off | AI command route; prefix remainder only. |
+| No | On | Complete ordinary transcript through correction-only Claude request. |
+| No | Off | Local processed transcript passes through unchanged. |
+
 ## 7. TranscriptionCoordinator
 
 `TranscriptionCoordinator` accepts the `RecordingCoordinator` audio callback and is called only while `AppStateManager.currentState == .processing`. Requests in any other state are ignored.
@@ -189,7 +200,7 @@ The current flow is:
 processing
   → TranscriptionEngine.transcribe(audioURL:)
   → TextProcessor.process(rawText)
-  → optional ClaudeCommandProcessor.processIfRequested(processedText)
+  → ClaudeCommandProcessor.processTranscribedText(processedText)
   → reject empty final text as noAudioDetected
   → state = injecting
   → onTranscriptionComplete(finalText, targetApp)
@@ -225,7 +236,7 @@ The current executable tests include:
 | `voiceflowTests/Transcription/TranscriptionCoordinatorTests.swift` | Processing-state gate, artifact cleanup, processed callback text, success-to-injecting transition, missing-model mapping |
 | `voiceflowTests/Transcription/TranscriptionPipelineIntegrationTests.swift` | Audio fixture through transcription coordinator to injection-ready callback |
 | `voiceflowTests/Transcription/TextProcessorTests.swift` | Whitespace and known-artifact cleanup |
-| `voiceflowTests/LLM/ClaudeClientTests.swift` | Claude-prefix parsing, normal-dictation bypass, prompt forwarding, missing-key handling, and coordinator routing |
+| `voiceflowTests/LLM/ClaudeClientTests.swift` | Claude-prefix parsing, normal-dictation bypass, AI-prefix precedence with Grammar Fix enabled/disabled, correction-only system prompt forwarding, missing-key handling, and coordinator routing |
 
 Tests must use temporary model directories and injected catalog/session factories. They must not download real models or log real spoken content in ordinary unit-test runs. A manual real-model verification may use a locally installed WhisperKit model and a controlled audio fixture, but the fixture content must not be written to logs.
 
@@ -243,8 +254,9 @@ Tests must use temporary model directories and injected catalog/session factorie
 - Transcription never implicitly downloads and never uses a different model folder from the one validated.
 - Missing, incomplete, unloaded, silent, missing-file, and runtime failure cases map to documented errors.
 - Text cleanup is pure and preserves intended wording.
-- Transcription runs only from `.processing`, optionally routes explicit Claude commands, transitions success to `.injecting`, and emits final text with the original target application.
-- Claude commands are disabled by default, use Keychain credentials, and send only the explicitly routed text to Anthropic.
+- Transcription runs only from `.processing`, detects an eligible AI prefix before any optional Grammar Fix route, transitions success to `.injecting`, and emits final text with the original target application.
+- Claude commands are disabled by default, use Keychain credentials, and send only the explicitly routed prefix remainder to Anthropic.
+- Grammar Fix is independently opt-in, applies only when no AI prefix matches, uses a correction-only system prompt, and sends the complete ordinary transcript only when enabled.
 - All transcription and Claude tests pass and no audio, prompt, response, or injected-text content is logged.
 
 ## 10. Handoff to Specification 04

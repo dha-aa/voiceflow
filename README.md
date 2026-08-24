@@ -18,6 +18,7 @@ VoiceFlow is a privacy-first native macOS menu-bar dictation application. Hold *
 | Push-to-talk | A sustained Fn hold starts one recording session; releasing Fn stops it. A brief tap does not intentionally start dictation. |
 | Local transcription | WhisperKit runs the selected Core ML model locally. The app reuses a loaded session when the selected model has not changed. |
 | Claude commands | Optional BYOK Claude processing is triggered only when a transcript starts with the user-configured prefix; normal dictation remains local. |
+| Grammar Fix | Optional Claude grammar and punctuation correction applies only to ordinary speech without the configured AI prefix; AI commands always take precedence. |
 | Model management | Settings provides model availability, download progress, local Core ML model-folder import, selection, installation detection, validation, deletion protection, and Finder navigation. |
 | Readiness gating | VoiceFlow preloads the selected model and waits for it to be ready before recording begins. |
 | Text injection | The focused application is captured when recording begins. Accessibility-based insertion is attempted before keyboard-event fallback. |
@@ -43,6 +44,17 @@ Fn released
 ```
 
 If microphone permission, Accessibility permission, model installation, transcription, or injection fails, VoiceFlow shows an actionable error and returns the pipeline to a safe state.
+
+### AI command and Grammar Fix precedence
+
+VoiceFlow detects the configured AI prefix immediately after local transcription. A matching prefix always takes precedence over Grammar Fix: VoiceFlow removes the prefix, sends only the remaining request to Claude, and does not grammar-correct the command first. When no AI prefix is present and **Fix Grammar & Punctuation** is enabled in **Settings → AI**, VoiceFlow sends the ordinary transcript to Claude with a correction-only system instruction and injects only Claude’s corrected text. When both features are off, the local transcript is injected unchanged.
+
+| AI prefix detected | Grammar Fix | Result |
+|---|---|---|
+| Yes | On | Send the prefix remainder to Claude as an AI request; do not apply Grammar Fix first. |
+| Yes | Off | Send the prefix remainder to Claude as an AI request. |
+| No | On | Send the complete ordinary transcript to Claude for grammar, spelling, capitalization, and punctuation correction only. |
+| No | Off | Keep the transcript local and inject it unchanged. |
 
 ## Requirements
 
@@ -95,7 +107,7 @@ WhisperKit’s downloaded repository layout is nested below that root under `mod
 
 ## Privacy and security model
 
-VoiceFlow’s normal recording-to-injection path is local. Network access is used for model catalog and model downloads, not for sending captured audio for remote transcription. An explicit, user-enabled Claude command is the only exception for dictated text: when enabled and the transcript begins with the configured custom prefix, only the command remainder is sent to Anthropic. Do not add telemetry, remote transcription, or transcript-bearing diagnostics without a separate privacy review.
+VoiceFlow’s normal recording-to-injection path is local. Network access is used for model catalog and model downloads, not for sending captured audio for remote transcription. Explicit, user-enabled Claude processing is the only dictated-text exception: a matching custom prefix sends only the command remainder, while Grammar Fix sends the complete ordinary transcript only when its toggle is enabled and no AI prefix matches. Do not add telemetry, remote transcription, or transcript-bearing diagnostics without a separate privacy review.
 
 Logs must remain metadata-only. Safe examples include model IDs, model paths, audio file identifiers, file sizes, durations, state names, process identifiers, and error categories. Do not log microphone samples, audio contents, raw transcripts, inserted text, clipboard contents, or secret environment variables.
 
@@ -103,9 +115,9 @@ The app is intentionally non-sandboxed because the current implementation uses g
 
 ### AI settings and optional Claude commands
 
-Open **Settings → AI** to choose the default AI provider. Claude is currently the only implemented provider; ChatGPT is shown as a future provider and does not make OpenAI requests in this version. Enable Claude commands, set a custom command prefix, enter an Anthropic API key, and save it. After saving, the UI shows a masked value and **Configured** status with **Change API Key** and **Remove API Key** controls. VoiceFlow stores the key in the macOS Keychain, not in UserDefaults, source files, logs, or model files. The Claude model is selected per provider and can be entered manually or fetched from Anthropic with **Fetch available models**. The initial fallback is `claude-sonnet-5`; use a model ID available to your Anthropic account. Anthropic documents the model-list operation and direct Messages API request headers.[4] [5]
+Open **Settings → AI** to choose the default AI provider. Claude is currently the only implemented provider; ChatGPT is shown as a future provider and does not make OpenAI requests in this version. Enable Claude commands, set a custom command prefix, enter an Anthropic API key, and save it. The independent **Fix Grammar & Punctuation** toggle enables correction-only processing for ordinary speech without an AI prefix. After saving, the UI shows a masked value and **Configured** status with **Change API Key** and **Remove API Key** controls. VoiceFlow stores the key in the macOS Keychain, not in UserDefaults, source files, logs, or model files. The Claude model is selected per provider and can be entered manually or fetched from Anthropic with **Fetch available models**. The initial fallback is `claude-sonnet-5`; use a model ID available to your Anthropic account. Anthropic documents the model-list operation and direct Messages API request headers.[4] [5]
 
-When enabled, a spoken transcript beginning with the configured custom prefix routes only the remaining text to Claude. The default prefix is `Claude`, but users can choose a phrase such as `Ask Claude`, `AI`, `@claude`, or `Jarvis`. For example, with the prefix `Claude`, `Claude, rewrite this politely` sends `rewrite this politely`; normal dictation does not call the network. Claude’s returned text is then sent through the existing injection path. Microphone audio and the ordinary local transcription remain local, but the explicitly routed text is intentionally sent to Anthropic using the user’s own key. VoiceFlow logs only provider/model identifiers, character counts, durations, and error categories—not API keys, prompts, responses, audio, or injected text.
+When enabled, a spoken transcript beginning with the configured custom prefix routes only the remaining text to Claude. The default prefix is `Claude`, but users can choose a phrase such as `Ask Claude`, `AI`, `@claude`, or `Jarvis`. For example, with the prefix `Claude`, `Claude, rewrite this politely` sends `rewrite this politely`; normal dictation without the prefix remains local unless Grammar Fix is enabled. If Grammar Fix is enabled and no prefix matches, VoiceFlow sends the complete ordinary transcript to Claude with a correction-only system prompt and injects the returned corrected text. AI-prefix detection always happens first, so Grammar Fix cannot modify an AI command before Claude receives it. Claude’s returned text is then sent through the existing injection path. Microphone audio and the ordinary local transcription remain local, but explicitly routed text is intentionally sent to Anthropic using the user’s own key. VoiceFlow logs only provider/model identifiers, character counts, durations, and error categories—not API keys, prompts, responses, audio, or injected text.
 
 ## Development commands
 
@@ -125,7 +137,7 @@ xcodebuild \
   CODE_SIGNING_ALLOWED=NO
 ```
 
-The current suite contains **123 tests** covering the recording stage, pipeline coordination, model management, transcription session behavior, text injection, overlay state, provider-aware overlay status, onboarding permission flow, AI provider/model persistence, custom-prefix routing, Claude model-list decoding, and related regressions. See [`docs/testing.md`](docs/testing.md) for the full verification matrix.
+The current suite contains **127 tests** covering the recording stage, pipeline coordination, model management, transcription session behavior, text injection, overlay state, provider-aware overlay status, onboarding permission flow, AI provider/model persistence, custom-prefix routing, Grammar Fix precedence, Claude model-list decoding, and related regressions. See [`docs/testing.md`](docs/testing.md) for the full verification matrix.
 
 Build a local unsigned app bundle into `build/` with the convenience script:
 

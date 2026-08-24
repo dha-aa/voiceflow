@@ -40,7 +40,7 @@ The goal is not to claim that an unsigned artifact has the trust properties of a
 | Entitlements | Non-sandboxed app plus `com.apple.security.device.audio-input = true` |
 | App identity | `LSUIElement = true`, no Dock icon, menu-bar agent |
 | Local inference | WhisperKit 0.18.0, model files under app-owned Application Support storage |
-| Tests | 123 XCTest methods in the current test target after first-launch onboarding coverage |
+| Tests | 127 XCTest methods in the current test target after Grammar Fix precedence coverage |
 | Privacy | No audio, spoken text, transcript, prompt, response, or injected content in logs; optional Claude requests are explicit and text-only |
 | Protected branch | `main` requires pull requests, approval, and the `CI Quality Gate` status check |
 
@@ -72,7 +72,7 @@ Screen Recording is currently informational only. VoiceFlow does not request it 
 
 ### Transcription
 
-The transcription coordinator accepts work only while the shared state is `.processing`. Missing files, missing models, load failures, empty output, and runtime failures map to the documented shared errors. `TextProcessor` removes only known `[BLANK_AUDIO]`/`(inaudible)` artifacts and normalizes whitespace; it does not paraphrase or rewrite. When Claude commands are enabled, Claude is selected, and the processed transcript begins with the persisted custom prefix, only the remaining text is sent to Anthropic over HTTPS; the returned text replaces the local transcript before injection. Matching is case-insensitive and rejects an embedded prefix inside another word. Normal dictation remains local.
+The transcription coordinator accepts work only while the shared state is `.processing`. Missing files, missing models, load failures, empty output, and runtime failures map to the documented shared errors. `TextProcessor` removes only known `[BLANK_AUDIO]`/`(inaudible)` artifacts and normalizes whitespace; it does not paraphrase or rewrite. The Claude processor checks the configured AI prefix before any Grammar Fix request. When Claude commands are enabled, Claude is selected, and the processed transcript begins with the persisted custom prefix, only the remaining text is sent to Anthropic over HTTPS; the returned text replaces the local transcript before injection. Matching is case-insensitive and rejects an embedded prefix inside another word. If no AI prefix matches and Grammar Fix is enabled, the complete ordinary transcript is sent to Claude with a correction-only system prompt. If both routes are disabled, normal dictation remains local.
 
 ### Injection
 
@@ -88,7 +88,7 @@ The overlay is a non-activating 270×58 pt panel with a 252×48 pt single black 
 
 ## 4. Privacy and security requirements
 
-All microphone capture, temporary recordings, model files, and default WhisperKit inference remain local. The application must not send audio to a remote endpoint. Optional Claude processing is an explicit user-enabled exception: only the text after the persisted leading custom prefix is sent to Anthropic, and the UI/documentation must disclose that network boundary.
+All microphone capture, temporary recordings, model files, and default WhisperKit inference remain local. The application must not send audio to a remote endpoint. Optional Claude processing is an explicit user-enabled exception: a matching AI prefix sends only the persisted-prefix remainder to Anthropic, while Grammar Fix sends the complete ordinary transcript only when enabled and no AI prefix matches. The UI/documentation must disclose both text-only network boundaries.
 
 Structured logs may contain only metadata needed for diagnosis, such as state names, model identifiers, canonical paths, process IDs, bundle identifiers, durations, byte counts, frame counts, progress, result character counts, and error categories. They must not contain audio samples, spoken phrases, raw transcription, Claude prompts, Claude responses, injected text, API keys, or full clipboard contents. [16]
 
@@ -219,7 +219,7 @@ This guidance does not bypass macOS security silently and does not claim that th
 
 ## 11. Tests and final verification
 
-The current repository contains 123 XCTest methods distributed across state, audio, transcription, injection, overlay, Settings, LLM, onboarding, package-import, and baseline tests. The complete test target is the primary regression gate. [22]
+The current repository contains 127 XCTest methods distributed across state, audio, transcription, injection, overlay, Settings, LLM, onboarding, package-import, and baseline tests. The complete test target is the primary regression gate. [22]
 
 Final verification must include:
 
@@ -240,7 +240,7 @@ Final verification must include:
 - No dedicated lint/format tool is claimed unless one is actually configured; current repository quality checks remain documented.
 - Privacy-safe logging contains no audio, speech, transcript, Claude prompt, Claude response, API key, or injected text.
 - First-launch onboarding explains the workflow and each current permission before requesting it, allows skip/denial recovery, and exposes unresolved permission recovery in General Settings. Screen Recording is explicitly not requested until screen-context AI exists.
-- Optional Claude processing is disabled by default, uses a Keychain-stored user key, shows only a masked Configured state after saving, sends only the remainder after the persisted custom prefix, uses the configured Claude model, and returns failures to a recoverable state.
+- Optional Claude processing is disabled by default, uses a Keychain-stored user key, shows only a masked Configured state after saving, sends only the remainder after the persisted custom prefix, uses the configured Claude model, and returns failures to a recoverable state. Grammar Fix is independently opt-in, uses a correction-only system prompt, sends the complete ordinary transcript only when no AI prefix matches, and never runs before AI-prefix detection.
 - AI settings persist the selected provider and model. Claude model refresh uses the authenticated Models API; ChatGPT remains explicitly unimplemented and makes no request.
 - Known edge cases are mapped to safe errors or explicitly recorded as current limitations.
 - Model download → structural validation → exact-folder load validation → detection → preload → transcription remains consistent.

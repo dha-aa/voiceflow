@@ -75,6 +75,76 @@ final class ClaudeClientTests: XCTestCase {
         XCTAssertEqual(client.receivedAPIKey, "test-key")
     }
 
+    func test_aiPrefixTakesPrecedenceWhenGrammarFixIsEnabled() async throws {
+        let defaults = UserDefaults(suiteName: "claude-prefix-precedence-\(UUID().uuidString)")!
+        defaults.set(true, forKey: ClaudeSettings.enabledKey)
+        defaults.set(true, forKey: ClaudeSettings.grammarFixEnabledKey)
+        let client = TestClaudeAPIClient(response: "Claude answer")
+        let processor = ClaudeCommandProcessor(
+            apiClient: client,
+            keyStore: TestClaudeAPIKeyStore(apiKey: "test-key"),
+            userDefaults: defaults
+        )
+
+        let result = try await processor.processTranscribedText("Claude explain how this code works")
+
+        XCTAssertEqual(result, "Claude answer")
+        XCTAssertEqual(client.callCount, 1)
+        XCTAssertEqual(client.receivedPrompt, "explain how this code works")
+        XCTAssertNil(client.receivedSystemPrompt)
+    }
+
+    func test_aiPrefixRoutesWithoutGrammarFix() async throws {
+        let defaults = UserDefaults(suiteName: "claude-prefix-only-\(UUID().uuidString)")!
+        defaults.set(true, forKey: ClaudeSettings.enabledKey)
+        defaults.set(false, forKey: ClaudeSettings.grammarFixEnabledKey)
+        let client = TestClaudeAPIClient(response: "Claude answer")
+        let processor = ClaudeCommandProcessor(
+            apiClient: client,
+            keyStore: TestClaudeAPIKeyStore(apiKey: "test-key"),
+            userDefaults: defaults
+        )
+
+        let result = try await processor.processTranscribedText("Claude explain this")
+
+        XCTAssertEqual(result, "Claude answer")
+        XCTAssertEqual(client.receivedPrompt, "explain this")
+        XCTAssertNil(client.receivedSystemPrompt)
+    }
+
+    func test_grammarFixProcessesOnlyNonPrefixedSpeech() async throws {
+        let defaults = UserDefaults(suiteName: "claude-grammar-only-\(UUID().uuidString)")!
+        defaults.set(true, forKey: ClaudeSettings.grammarFixEnabledKey)
+        let client = TestClaudeAPIClient(response: "I am going to the market tomorrow.")
+        let processor = ClaudeCommandProcessor(
+            apiClient: client,
+            keyStore: TestClaudeAPIKeyStore(apiKey: "test-key"),
+            userDefaults: defaults
+        )
+
+        let result = try await processor.processTranscribedText("i am going to market tomorrow")
+
+        XCTAssertEqual(result, "I am going to the market tomorrow.")
+        XCTAssertEqual(client.callCount, 1)
+        XCTAssertEqual(client.receivedPrompt, "i am going to market tomorrow")
+        XCTAssertEqual(client.receivedSystemPrompt, ClaudeSettings.grammarCorrectionSystemPrompt)
+    }
+
+    func test_normalSpeechBypassesClaudeWhenGrammarFixIsDisabled() async throws {
+        let defaults = UserDefaults(suiteName: "claude-no-processing-\(UUID().uuidString)")!
+        let client = TestClaudeAPIClient(response: "should not be used")
+        let processor = ClaudeCommandProcessor(
+            apiClient: client,
+            keyStore: TestClaudeAPIKeyStore(apiKey: "test-key"),
+            userDefaults: defaults
+        )
+
+        let result = try await processor.processTranscribedText("ordinary local dictation")
+
+        XCTAssertNil(result)
+        XCTAssertEqual(client.callCount, 0)
+    }
+
     func test_processorRejectsClaudeCommandWithoutAPIKey() async {
         let defaults = UserDefaults(suiteName: "claude-no-key-\(UUID().uuidString)")!
         defaults.set(true, forKey: ClaudeSettings.enabledKey)
@@ -173,16 +243,23 @@ private final class TestClaudeAPIClient: ClaudeAPIClient {
     private(set) var receivedPrompt: String?
     private(set) var receivedAPIKey: String?
     private(set) var receivedModel: String?
+    private(set) var receivedSystemPrompt: String?
 
     init(response: String) {
         self.response = response
     }
 
-    func complete(prompt: String, apiKey: String, model: String) async throws -> String {
+    func complete(
+        prompt: String,
+        apiKey: String,
+        model: String,
+        systemPrompt: String?
+    ) async throws -> String {
         callCount += 1
         receivedPrompt = prompt
         receivedAPIKey = apiKey
         receivedModel = model
+        receivedSystemPrompt = systemPrompt
         return response
     }
 }

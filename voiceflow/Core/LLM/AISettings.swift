@@ -62,6 +62,7 @@ protocol AIModelCatalogClient {
 enum AISettings {
     static let selectedProviderKey = "aiSelectedProvider"
     static let commandsEnabledKey = "claudeCommandsEnabled"
+    static let grammarFixEnabledKey = "grammarFixEnabled"
     static let commandPrefixKey = "aiCommandPrefix"
     static let legacyClaudeModelKey = "claudeModel"
     static let defaultCommandPrefix = "Claude"

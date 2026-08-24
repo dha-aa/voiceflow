@@ -10,6 +10,7 @@ import SwiftUI
 struct AISettingsView: View {
     @AppStorage(AISettings.selectedProviderKey) private var selectedProviderRawValue = AIProvider.claude.rawValue
     @AppStorage(AISettings.commandsEnabledKey) private var claudeCommandsEnabled = false
+    @AppStorage(AISettings.grammarFixEnabledKey) private var grammarFixEnabled = false
     @AppStorage(AISettings.modelKey(for: .claude)) private var claudeModel = ClaudeSettings.defaultModel
     @AppStorage(AISettings.commandPrefixKey) private var commandPrefix = AISettings.defaultCommandPrefix
 
@@ -61,6 +62,11 @@ struct AISettingsView: View {
             Section("Claude") {
                 Toggle("Enable Claude commands", isOn: $claudeCommandsEnabled)
                 Text("Start a spoken request with your configured prefix to send only the remaining text to Anthropic. Normal dictation remains local.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Toggle("Fix Grammar & Punctuation", isOn: $grammarFixEnabled)
+                Text("Corrects ordinary dictated text with Claude. A matching AI prefix always takes precedence, so your AI request is sent unchanged rather than corrected first.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
