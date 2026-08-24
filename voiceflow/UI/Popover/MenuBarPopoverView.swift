@@ -79,7 +79,9 @@ struct MenuBarPopoverView: View {
                 .first { $0.id == selectedID }?.displayName ?? selectedID
             return "WhisperKit: \(displayName)"
         case .parakeet:
-            return "Parakeet: \(parakeetModelManager.isInstalled ? "Installed" : "Not installed")"
+            let variant = parakeetModelManager.selectedVariant.displayName
+            let status = parakeetModelManager.isInstalled ? "Installed" : "Not ready"
+            return "\(variant): \(status)"
         }
     }
 }

@@ -1,6 +1,6 @@
 # VoiceFlow
 
-VoiceFlow is a privacy-first native macOS menu-bar dictation application. Hold **Fn** to record, release it to transcribe locally with WhisperKit or Parakeet TDT v3, and inject the resulting text into the focused text field. Audio and dictated content remain on the Mac during normal operation; VoiceFlow does not send microphone audio or transcription text to a remote service.
+VoiceFlow is a privacy-first native macOS menu-bar dictation application. Hold **Fn** to record, release it to transcribe locally with WhisperKit or Parakeet TDT v2/v3, and inject the resulting text into the focused text field. Audio and dictated content remain on the Mac during normal operation; VoiceFlow does not send microphone audio or transcription text to a remote service.
 
 > **Current distribution note:** VoiceFlow supports an unsigned DMG for development or private sharing. A signed and notarized DMG is also supported when Apple Developer credentials are configured. Unsigned applications can trigger macOS Gatekeeper warnings.
 >
@@ -16,10 +16,10 @@ VoiceFlow is a privacy-first native macOS menu-bar dictation application. Hold *
 | Capability | Description |
 |---|---|
 | Push-to-talk | A sustained Fn hold starts one recording session; releasing Fn stops it. A brief tap does not intentionally start dictation. |
-| Local transcription | WhisperKit or Parakeet TDT v3 runs the selected Core ML model locally. The app reuses a loaded engine session when the selected engine/model has not changed. |
+| Local transcription | WhisperKit or Parakeet TDT v2/v3 runs the selected Core ML model locally. The app reuses a loaded engine session when the selected engine/model has not changed. Parakeet v2 is English-focused; v3 is multilingual and batch-oriented. |
 | Claude commands | Optional BYOK Claude processing is triggered only when a transcript starts with the user-configured prefix; normal dictation remains local. When selected text is available, only the selection and instruction are sent, and the result replaces that selection. |
 | Grammar Fix | Optional Claude grammar and punctuation correction applies only to ordinary speech without the configured AI prefix; AI commands always take precedence. |
-| Model management | Settings provides engine-aware model availability, Parakeet download/status, WhisperKit download progress, local Core ML model-folder import, selection, installation detection, validation, deletion protection, and Finder navigation. |
+| Model management | Settings provides engine-aware model availability, Parakeet v2/v3 download/status, WhisperKit download progress, local Core ML model-folder import, selection, installation detection, validation, deletion protection, and Finder navigation. Parakeet validation is separate from WhisperKit and rejects raw NVIDIA NeMo/Transformers repositories. |
 | Readiness gating | VoiceFlow preloads the selected model and waits for it to be ready before recording begins. |
 | Text injection | The focused application is captured when recording begins. Accessibility-based insertion is attempted before keyboard-event fallback. |
 | Recording overlay | A compact floating HUD communicates Loading model, Listening, Processing, `Using Claude...` or `Using ChatGPT...` for AI requests, Done, and error states. |
@@ -58,7 +58,7 @@ VoiceFlow detects the configured AI prefix immediately after local transcription
 
 ## Requirements
 
-VoiceFlow currently targets **macOS 14.0 or later** and is built with the native SwiftUI/AppKit stack. Development requires the full Xcode installation, not only Command Line Tools. The project uses Swift Package Manager through the Xcode project and depends on [Argmax OSS Swift](https://github.com/argmaxinc/argmax-oss-swift) for WhisperKit and [FluidAudio](https://github.com/FluidInference/FluidAudio) 0.15.6 for Parakeet TDT v3.
+VoiceFlow currently targets **macOS 14.0 or later** and is built with the native SwiftUI/AppKit stack. Development requires the full Xcode installation, not only Command Line Tools. The project uses Swift Package Manager through the Xcode project and depends on [Argmax OSS Swift](https://github.com/argmaxinc/argmax-oss-swift) for WhisperKit and [FluidAudio](https://github.com/FluidInference/FluidAudio) 0.15.6 for Parakeet TDT v2/v3.
 
 A real dictation session requires microphone permission and Accessibility or Input Monitoring permission as requested by macOS. Text injection into another application cannot be verified from a build-only test; it must be tested manually with a permitted target application.
 
@@ -75,13 +75,15 @@ open voiceflow.xcodeproj
 
 Select the `voiceflow` scheme and run the app from Xcode. VoiceFlow appears as a menu-bar application rather than a normal Dock application. On the first launch, the onboarding window explains the workflow and presents Microphone and Accessibility permissions one at a time before asking macOS to display each system prompt. Screen Recording is explained as a future screen-context capability and is not requested by the current version. If a permission is skipped or denied, VoiceFlow remains usable where possible; unresolved permissions can later be requested or opened in **Settings → General → Permissions**.
 
-Open the menu-bar popover and go to **Settings → Models**. Select an installed model, download one, or use **Import Model** to choose a local WhisperKit Core ML model folder such as `Oriserve_Whisper-Hindi2Hinglish-Prime_889MB` from Finder. VoiceFlow validates the imported folder, verifies it can load through WhisperKit, and copies it into the managed model directory before showing it as installed. Choose **WhisperKit** or **Parakeet TDT v3** in **Settings → Models**. WhisperKit uses the canonical model root below. Parakeet uses a separate FluidAudio cache and is currently supported on Apple Silicon only. VoiceFlow stores its canonical WhisperKit model root under:
+Open the menu-bar popover and go to **Settings → Models**. Select an installed model, download one, or use **Import Model** to choose a local WhisperKit Core ML model folder such as `Oriserve_Whisper-Hindi2Hinglish-Prime_889MB` from Finder. VoiceFlow validates the imported folder, verifies it can load through WhisperKit, and copies it into the managed model directory before showing it as installed. Choose **WhisperKit** or **Parakeet TDT v2/v3** in **Settings → Models**. WhisperKit uses the canonical model root below. Parakeet uses a separate FluidAudio cache and is currently supported on Apple Silicon only. VoiceFlow stores its canonical WhisperKit model root under:
 
 ```text
 ~/Library/Application Support/dha-aa.voiceflow/models
 ```
 
 WhisperKit’s downloaded repository layout is nested below that root under `models/argmaxinc/whisperkit-coreml/openai_whisper-<variant>`. Registered custom models use their own repository namespace and exact folder name, for example `models/nitinh/whisperkit-hinglish-coreml/Oriserve_Whisper-Hindi2Hinglish-Prime_889MB`. VoiceFlow validates the exact model folder and confirms that WhisperKit can load the required model components before marking a model as installed.
+
+Parakeet downloads use FluidAudio’s cache folder names under `~/Library/Application Support/dha-aa.voiceflow/models/fluidaudio/parakeet-tdt-0.6b-v3` or `parakeet-tdt-0.6b-v2`. The supported sources are the [FluidInference v3 Core ML conversion](https://huggingface.co/FluidInference/parakeet-tdt-0.6b-v3-coreml) and [FluidInference v2 Core ML conversion](https://huggingface.co/FluidInference/parakeet-tdt-0.6b-v2-coreml). The upstream [NVIDIA v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) and [NVIDIA v2](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2) repositories contain NeMo/Transformers artifacts such as `.nemo`, `model.safetensors`, or GGUF files; VoiceFlow rejects them because they are not FluidAudio Core ML bundles. A model is shown as installed only after the exact required bundles are present and `AsrModels.load` succeeds.
 
 ## Repository layout
 
@@ -138,7 +140,7 @@ xcodebuild \
   CODE_SIGNING_ALLOWED=NO
 ```
 
-The current suite contains **137 tests** covering the recording stage, pipeline coordination, model management, transcription session behavior, text injection, overlay state, provider-aware overlay status, onboarding permission flow, AI provider/model persistence, custom-prefix routing, Grammar Fix precedence, provider-neutral request handling, selected-text forwarding, broad-context suppression when selected text exists, no-selection fallback, optional screen-context forwarding, Claude model-list decoding, Parakeet session reuse and error mapping, persisted speech-engine selection, router dispatch, and related regressions. See [`docs/testing.md`](docs/testing.md) for the full verification matrix.
+The current suite contains **141 tests** covering the recording stage, pipeline coordination, model management, transcription session behavior, text injection, overlay state, provider-aware overlay status, onboarding permission flow, AI provider/model persistence, custom-prefix routing, Grammar Fix precedence, provider-neutral request handling, selected-text forwarding, broad-context suppression when selected text exists, no-selection fallback, optional screen-context forwarding, Claude model-list decoding, Parakeet session reuse and error mapping, persisted speech-engine selection, router dispatch, and related regressions. See [`docs/testing.md`](docs/testing.md) for the full verification matrix.
 
 Build a local unsigned app bundle into `build/` with the convenience script:
 

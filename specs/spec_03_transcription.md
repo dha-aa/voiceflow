@@ -288,19 +288,41 @@ Do not begin Specification 04 until canonical model discovery, download validati
 
 ## 10. Multi-engine local transcription
 
-The local speech-to-text boundary is `SpeechTranscriptionEngine`, which exposes `prepare()`, `waitUntilReady()`, `preloadSelectedModel()`, `modelSelectionDidChange()`, and `transcribe(audioURL:)`. `TranscriptionCoordinator` depends on this contract rather than on WhisperKit directly, so the outer recording, processing, AI-routing, and injection pipeline is reusable across local engines.
+The local speech-to-text boundary is `SpeechTranscriptionEngine`, which exposes `prepare()`, `waitUntilReady()`, `preloadSelectedModel()`, `modelSelectionDidChange()`, and `transcribe(audioURL:)`. `TranscriptionCoordinator` depends on this contract rather than on WhisperKit directly, so the outer recording, processing, AI-routing, and injection pipeline is reusable across local engines:
 
-`TranscriptionEngine` remains the WhisperKit implementation and keeps its existing model discovery, validation, cached-session reuse, custom-model support, preload, and error semantics. `ParakeetTranscriptionEngine` is a separate FluidAudio-backed implementation for the official Parakeet TDT 0.6B v3 Core ML model. The active implementation uses FluidAudio `0.15.6`, `AsrModels`, `AsrManager`, and a fresh `TdtDecoderState` per utterance.
+```text
+VoiceFlow recording
+        ↓
+SpeechTranscriptionRouter
+   ↙                 ↘
+WhisperKit       FluidAudio
+   ↘                 ↙
+common TextProcessor → optional AI → InjectionCoordinator
+```
 
-Parakeet v3 is integrated as local batch transcription over VoiceFlow’s finalized audio file. It is not described as true live streaming: FluidAudio’s streaming APIs and models are separate products. Parakeet model files are managed under the app-owned FluidAudio cache path and are loaded once, reused for later utterances, and invalidated when the selected engine changes. Model readiness is still awaited before recording starts.
+`TranscriptionEngine` remains the WhisperKit implementation and keeps its existing model discovery, validation, cached-session reuse, custom-model support, preload, and error semantics. `ParakeetTranscriptionEngine` is a separate FluidAudio-backed implementation using `AsrModels`, `AsrManager`, and a fresh `TdtDecoderState` per finalized audio file. The FluidAudio dependency is pinned to `0.15.6`.
 
-`SpeechRecognitionSettings` persists the selected engine (`WhisperKit` by default or `Parakeet TDT v3`) in `UserDefaults`. Only the Parakeet v3 model is registered for the new engine. No LLM, remote speech service, microphone upload, or automatic migration of existing WhisperKit model folders is part of this change. On unsupported Intel Macs, missing/incomplete Parakeet files, or model-load failure, the common transcription error path reports failure and leaves WhisperKit available.
+`ParakeetModelVariant` currently supports two explicit variants. v3 is multilingual and uses FluidAudio’s int8 encoder plus `JointDecisionv3.mlmodelc`; v2 is English-focused and uses the standard `JointDecision.mlmodelc`. The canonical local directories are:
+
+| Variant | FluidInference source | Canonical local directory | Required artifacts |
+|---|---|---|---|
+| v3 | `FluidInference/parakeet-tdt-0.6b-v3-coreml` | `models/fluidaudio/parakeet-tdt-0.6b-v3` | `Preprocessor.mlmodelc`, `Encoder.mlmodelc`, `Decoder.mlmodelc`, `JointDecisionv3.mlmodelc`, `parakeet_vocab.json` |
+| v2 | `FluidInference/parakeet-tdt-0.6b-v2-coreml` | `models/fluidaudio/parakeet-tdt-0.6b-v2` | `Preprocessor.mlmodelc`, `Encoder.mlmodelc`, `Decoder.mlmodelc`, `JointDecision.mlmodelc`, `parakeet_vocab.json` |
+
+Each compiled `.mlmodelc` must remain a directory containing the Core ML compiled contents required by the package, including `model.mil`, `metadata.json`, and `coremldata.bin`. `AsrModels.modelsExist` and `AsrModels.load` are called with the same variant and exact directory. The manager does not infer a model from arbitrary filenames or route Parakeet folders through WhisperKit validation.
+
+The NVIDIA repositories `nvidia/parakeet-tdt-0.6b-v3` and `nvidia/parakeet-tdt-0.6b-v2` are upstream NeMo/Transformers repositories. Their `.nemo`, `model.safetensors`, GGUF, and tokenizer/config artifacts are not accepted as FluidAudio Core ML models. The UI and errors explicitly direct users to the corresponding FluidInference conversion. A partial bundle reports missing artifacts; malformed compiled bundles report the missing Core ML contents; a raw NVIDIA repository reports the detected source markers; a structurally complete bundle is still not marked installed until `AsrModels.load` succeeds.
+
+Parakeet v2 and v3 are integrated as local batch transcription over VoiceFlow’s finalized audio file. They are not described as true live streaming: FluidAudio’s streaming APIs and separate streaming/EOU models are outside this integration. Parakeet files are downloaded, validated, and loaded once, reused for later utterances, and invalidated when the selected variant or engine changes. Model readiness is awaited before recording starts.
+
+`SpeechRecognitionSettings` persists the selected engine (`WhisperKit` by default or Parakeet) in `UserDefaults`. `ParakeetModelManager` separately persists the selected v2/v3 variant and owns only the FluidAudio cache. No LLM, remote speech service, microphone upload, or automatic migration of existing WhisperKit model folders is part of this stage. On unsupported Intel Macs, missing/incomplete Parakeet files, raw NVIDIA source folders, or load failure, the common transcription error path reports an actionable failure and leaves WhisperKit available.
 
 Acceptance criteria:
 
 - Existing WhisperKit model selection, preload, caching, custom-model loading, and tests remain functional.
 - Selecting Parakeet uses only the FluidAudio model directory and never falls back to a WhisperKit model silently.
-- Parakeet is marked usable only when its required v3 Core ML artifacts and vocabulary are present and its FluidAudio session can load.
-- A missing or unsupported Parakeet installation produces an actionable model error rather than a crash or a false-ready state.
+- v2 and v3 are independently selectable and persisted, with the exact FluidAudio cache directory and loader parameters used consistently.
+- Parakeet is marked usable only when the exact required artifacts are present, compiled bundle contents are structurally complete, and its FluidAudio session can load.
+- A missing, partial, malformed, or raw NVIDIA installation produces a precise actionable model error rather than a crash or false-ready state.
 - Both engines return normalized non-empty text through the same `TranscriptionCoordinator` contract and preserve downstream Grammar Fix, AI-prefix, and text-injection behavior.
 - Normal audio remains on-device; FluidAudio performs local Core ML inference only.

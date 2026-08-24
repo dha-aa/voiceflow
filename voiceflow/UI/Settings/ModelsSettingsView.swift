@@ -121,12 +121,35 @@ struct ModelsSettingsView: View {
             .pickerStyle(.menu)
 
             if speechRecognitionSettings.selectedEngine == .parakeet {
+                Picker("Parakeet model", selection: Binding(
+                    get: { parakeetModelManager.selectedVariant },
+                    set: { parakeetModelManager.selectVariant($0) }
+                )) {
+                    ForEach(ParakeetModelVariant.allCases) { variant in
+                        Text(variant.displayName).tag(variant)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                Text("\(parakeetModelManager.selectedVariant.languageDescription) · FluidAudio Core ML")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("VoiceFlow uses the FluidInference Core ML conversion. The NVIDIA upstream NeMo/Transformers repository cannot be loaded directly.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
                 HStack(spacing: 8) {
-                    Image(systemName: parakeetModelManager.isInstalled ? "checkmark.circle.fill" : "arrow.down.circle")
+                    Image(systemName: parakeetModelManager.isInstalled ? "checkmark.circle.fill" : "exclamationmark.triangle")
                         .foregroundStyle(parakeetModelManager.isInstalled ? .green : .secondary)
-                    Text(parakeetModelManager.isInstalled ? "Parakeet model installed locally" : "Parakeet model is not installed")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(parakeetModelManager.isInstalled ? "Installed and loadable" : "Not ready")
+                            .font(.caption.weight(.medium))
+                        Text(parakeetModelManager.validation.message)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(3)
+                    }
                     Spacer()
                     if parakeetModelManager.isLoading {
                         ProgressView(value: parakeetModelManager.progress)
@@ -135,9 +158,14 @@ struct ModelsSettingsView: View {
                         Text("\(Int(parakeetModelManager.progress * 100))%")
                             .font(.caption2.monospacedDigit())
                             .foregroundStyle(.secondary)
-                    } else if !parakeetModelManager.isInstalled {
-                        Button("Download") {
-                            startParakeetDownload()
+                    } else if parakeetModelManager.isInstalled {
+                        Button("Open Folder") {
+                            NSWorkspace.shared.open(parakeetModelManager.modelDirectory)
+                        }
+                        .buttonStyle(.borderless)
+                    } else {
+                        Button(parakeetModelManager.needsRepair ? "Repair" : "Download") {
+                            startParakeetDownload(force: parakeetModelManager.needsRepair)
                         }
                         .buttonStyle(.borderedProminent)
                     }
@@ -231,10 +259,10 @@ struct ModelsSettingsView: View {
         downloadCoordinator.startDownload(id: model.id)
     }
 
-    private func startParakeetDownload() {
+    private func startParakeetDownload(force: Bool = false) {
         Task { @MainActor in
             do {
-                try await parakeetModelManager.download { _ in }
+                try await parakeetModelManager.download(force: force) { _ in }
             } catch {
                 errorMessage = errorDescription(for: error)
             }

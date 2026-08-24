@@ -2,7 +2,7 @@
 //  ParakeetTranscriptionEngine.swift
 //  VoiceFlow
 //
-//  Local Parakeet TDT 0.6B v3 transcription through FluidAudio/Core ML.
+//  Local Parakeet TDT transcription through FluidAudio/Core ML.
 //
 
 import FluidAudio
@@ -14,34 +14,36 @@ protocol ParakeetSession {
 }
 
 protocol ParakeetSessionFactory {
-    func makeSession(modelFolder: URL) async throws -> ParakeetSession
+    func makeSession(modelFolder: URL, variant: ParakeetModelVariant) async throws -> ParakeetSession
 }
 
 private struct LiveParakeetSessionFactory: ParakeetSessionFactory {
-    func makeSession(modelFolder: URL) async throws -> ParakeetSession {
+    func makeSession(modelFolder: URL, variant: ParakeetModelVariant) async throws -> ParakeetSession {
         let models = try await AsrModels.load(
             from: modelFolder,
-            version: .v3,
-            encoderPrecision: .int8
+            version: variant.asrVersion,
+            encoderPrecision: variant.encoderPrecision
         )
         let manager = AsrManager(config: .default)
         try await manager.loadModels(models)
         VoiceFlowLog.transcription.info(
-            "parakeet_manager_loaded model_folder=\(modelFolder.path, privacy: .public)"
+            "parakeet_manager_loaded variant=\(variant.rawValue, privacy: .public) model_folder=\(modelFolder.path, privacy: .public)"
         )
-        return LiveParakeetSession(manager: manager)
+        return LiveParakeetSession(manager: manager, variant: variant)
     }
 }
 
 private final class LiveParakeetSession: ParakeetSession {
     private let manager: AsrManager
+    private let variant: ParakeetModelVariant
 
-    init(manager: AsrManager) {
+    init(manager: AsrManager, variant: ParakeetModelVariant) {
         self.manager = manager
+        self.variant = variant
     }
 
     func transcribe(audioURL: URL) async throws -> String {
-        var decoderState = try TdtDecoderState(decoderLayers: 2)
+        var decoderState = try TdtDecoderState(decoderLayers: variant.asrVersion.decoderLayers)
         let result = try await manager.transcribe(audioURL, decoderState: &decoderState)
         return result.text
     }
@@ -53,6 +55,7 @@ final class ParakeetTranscriptionEngine: SpeechTranscriptionEngine {
     private let sessionFactory: ParakeetSessionFactory
 
     private var cachedSession: ParakeetSession?
+    private var cachedVariant: ParakeetModelVariant?
     private var inFlightLoadTask: Task<ParakeetSession, Error>?
     private var preloadTask: Task<Void, Never>?
 
@@ -71,7 +74,7 @@ final class ParakeetTranscriptionEngine: SpeechTranscriptionEngine {
         VoiceFlowLog.transcription.debug("parakeet_transcription_engine_initialized")
     }
 
-    var displayName: String { "Parakeet TDT v3" }
+    var displayName: String { modelManager.selectedVariant.displayName }
 
     func prepare() async throws {
         try await waitUntilReady()
@@ -87,13 +90,18 @@ final class ParakeetTranscriptionEngine: SpeechTranscriptionEngine {
         inFlightLoadTask?.cancel()
         inFlightLoadTask = nil
         cachedSession = nil
+        cachedVariant = nil
 
         guard modelManager.isInstalled else {
-            VoiceFlowLog.transcription.debug("parakeet_model_preload_skipped reason=model_not_installed")
+            VoiceFlowLog.transcription.debug(
+                "parakeet_model_preload_skipped reason=model_not_installed variant=\(self.modelManager.selectedVariant.rawValue, privacy: .public)"
+            )
             return
         }
 
-        VoiceFlowLog.transcription.info("parakeet_model_preload_requested")
+        VoiceFlowLog.transcription.info(
+            "parakeet_model_preload_requested variant=\(self.modelManager.selectedVariant.rawValue, privacy: .public)"
+        )
         preloadTask = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
@@ -124,22 +132,23 @@ final class ParakeetTranscriptionEngine: SpeechTranscriptionEngine {
         }
 
         let startedAt = Date()
+        let variant = modelManager.selectedVariant
         do {
-            let session = try await session()
-            let text = try await session.transcribe(audioURL: audioURL)
+            let loadedSession = try await session()
+            let text = try await loadedSession.transcribe(audioURL: audioURL)
             let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmedText.isEmpty else {
                 throw SpeechTranscriptionError.noAudioDetected
             }
             VoiceFlowLog.transcription.info(
-                "parakeet_transcription_succeeded audio_id=\(audioID, privacy: .public) duration_seconds=\(Date().timeIntervalSince(startedAt), privacy: .public) result_character_count=\(trimmedText.count, privacy: .public)"
+                "parakeet_transcription_succeeded variant=\(variant.rawValue, privacy: .public) audio_id=\(audioID, privacy: .public) duration_seconds=\(Date().timeIntervalSince(startedAt), privacy: .public) result_character_count=\(trimmedText.count, privacy: .public)"
             )
             return text
         } catch let error as SpeechTranscriptionError {
             throw error
         } catch {
             VoiceFlowLog.transcription.error(
-                "parakeet_transcription_failed audio_id=\(audioID, privacy: .public) duration_seconds=\(Date().timeIntervalSince(startedAt), privacy: .public) error=\(String(describing: error), privacy: .public)"
+                "parakeet_transcription_failed variant=\(variant.rawValue, privacy: .public) audio_id=\(audioID, privacy: .public) duration_seconds=\(Date().timeIntervalSince(startedAt), privacy: .public) error=\(String(describing: error), privacy: .public)"
             )
             throw SpeechTranscriptionError.transcriptionFailed(underlying: error)
         }
@@ -154,7 +163,9 @@ final class ParakeetTranscriptionEngine: SpeechTranscriptionEngine {
         guard modelManager.isInstalled else {
             throw SpeechTranscriptionError.modelNotInstalled
         }
-        if let cachedSession {
+
+        let variant = modelManager.selectedVariant
+        if let cachedSession, cachedVariant == variant {
             return cachedSession
         }
         if let inFlightLoadTask {
@@ -169,26 +180,31 @@ final class ParakeetTranscriptionEngine: SpeechTranscriptionEngine {
 
         let modelDirectory = modelManager.modelDirectory
         VoiceFlowLog.transcription.info(
-            "parakeet_model_load_started model_directory=\(modelDirectory.path, privacy: .public)"
+            "parakeet_model_load_started variant=\(variant.rawValue, privacy: .public) model_directory=\(modelDirectory.path, privacy: .public)"
         )
-        let loadTask = Task { @MainActor [sessionFactory] in
-            try await sessionFactory.makeSession(modelFolder: modelDirectory)
+        let loadTask = Task { @MainActor [sessionFactory, modelDirectory, variant] in
+            try await sessionFactory.makeSession(modelFolder: modelDirectory, variant: variant)
         }
         inFlightLoadTask = loadTask
         do {
             let newSession = try await loadTask.value
-            if modelManager.isInstalled {
+            if modelManager.isInstalled, modelManager.selectedVariant == variant {
                 cachedSession = newSession
+                cachedVariant = variant
             }
             inFlightLoadTask = nil
-            VoiceFlowLog.transcription.info("parakeet_model_load_succeeded")
+            VoiceFlowLog.transcription.info(
+                "parakeet_model_load_succeeded variant=\(variant.rawValue, privacy: .public)"
+            )
             return newSession
         } catch is CancellationError {
             inFlightLoadTask = nil
             throw CancellationError()
         } catch {
             inFlightLoadTask = nil
-            VoiceFlowLog.transcription.error("parakeet_model_load_failed error=\(String(describing: error), privacy: .public)")
+            VoiceFlowLog.transcription.error(
+                "parakeet_model_load_failed variant=\(variant.rawValue, privacy: .public) error=\(String(describing: error), privacy: .public)"
+            )
             throw SpeechTranscriptionError.modelFailedToLoad(underlying: error)
         }
     }
