@@ -22,10 +22,13 @@ struct ModelsSettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            speechEngineSection
 
             ScrollView {
-                modelsList
+                VStack(alignment: .leading, spacing: 0) {
+                    speechEngineSection
+                    modelsList
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             if isRefreshing || modelManager.isLoading {
@@ -76,10 +79,11 @@ struct ModelsSettingsView: View {
         .alert("Model action failed", isPresented: errorAlertBinding) {
             Button("OK", role: .cancel) {
                 downloadCoordinator.dismissError()
+                parakeetModelManager.dismissError()
                 errorMessage = nil
             }
         } message: {
-            Text(errorMessage ?? downloadCoordinator.errorMessage ?? "Unknown model error")
+            Text(errorMessage ?? downloadCoordinator.errorMessage ?? parakeetModelManager.errorMessage ?? "Unknown model error")
         }
     }
 
@@ -139,37 +143,50 @@ struct ModelsSettingsView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
-                HStack(spacing: 8) {
-                    Image(systemName: parakeetModelManager.isInstalled ? "checkmark.circle.fill" : "exclamationmark.triangle")
-                        .foregroundStyle(parakeetModelManager.isInstalled ? .green : .secondary)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(parakeetModelManager.isInstalled ? "Installed and loadable" : "Not ready")
-                            .font(.caption.weight(.medium))
-                        Text(parakeetModelManager.validation.message)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(3)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: parakeetModelManager.isInstalled ? "checkmark.circle.fill" : "exclamationmark.triangle")
+                            .foregroundStyle(parakeetModelManager.isInstalled ? .green : .secondary)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(parakeetModelManager.isInstalled ? "Installed and loadable" : "Not ready")
+                                .font(.caption.weight(.medium))
+                            Text(parakeetModelManager.errorMessage ?? parakeetModelManager.validation.message)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(3)
+                                .truncationMode(.tail)
+                        }
+                        Spacer(minLength: 4)
                     }
-                    Spacer()
-                    if parakeetModelManager.isLoading {
-                        ProgressView(value: parakeetModelManager.progress)
-                            .progressViewStyle(.linear)
-                            .frame(width: 120)
-                        Text("\(Int(parakeetModelManager.progress * 100))%")
-                            .font(.caption2.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                    } else if parakeetModelManager.isInstalled {
-                        Button("Open Folder") {
-                            NSWorkspace.shared.open(parakeetModelManager.modelDirectory)
+                    HStack(spacing: 8) {
+                        if parakeetModelManager.isLoading {
+                            ProgressView(value: parakeetModelManager.progress)
+                                .progressViewStyle(.linear)
+                                .frame(maxWidth: .infinity)
+                            Text("\(Int(parakeetModelManager.progress * 100))%")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                            Button(parakeetModelManager.isCancelling ? "Cancelling…" : "Cancel") {
+                                parakeetModelManager.cancelDownload()
+                            }
+                            .buttonStyle(.borderless)
+                            .disabled(parakeetModelManager.isCancelling)
+                        } else if parakeetModelManager.isInstalled {
+                            Spacer()
+                            Button("Open Folder") {
+                                NSWorkspace.shared.open(parakeetModelManager.modelDirectory)
+                            }
+                            .buttonStyle(.borderless)
+                        } else {
+                            Spacer()
+                            Button(parakeetModelManager.needsRepair ? "Repair" : "Download") {
+                                startParakeetDownload(force: parakeetModelManager.needsRepair)
+                            }
+                            .buttonStyle(.borderedProminent)
                         }
-                        .buttonStyle(.borderless)
-                    } else {
-                        Button(parakeetModelManager.needsRepair ? "Repair" : "Download") {
-                            startParakeetDownload(force: parakeetModelManager.needsRepair)
-                        }
-                        .buttonStyle(.borderedProminent)
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .padding(.bottom, 12)
@@ -241,11 +258,12 @@ struct ModelsSettingsView: View {
 
     private var errorAlertBinding: Binding<Bool> {
         Binding(
-            get: { errorMessage != nil || downloadCoordinator.errorMessage != nil },
+            get: { errorMessage != nil || downloadCoordinator.errorMessage != nil || parakeetModelManager.errorMessage != nil },
             set: {
                 if !$0 {
                     errorMessage = nil
                     downloadCoordinator.dismissError()
+                    parakeetModelManager.dismissError()
                 }
             }
         )
@@ -260,13 +278,7 @@ struct ModelsSettingsView: View {
     }
 
     private func startParakeetDownload(force: Bool = false) {
-        Task { @MainActor in
-            do {
-                try await parakeetModelManager.download(force: force) { _ in }
-            } catch {
-                errorMessage = errorDescription(for: error)
-            }
-        }
+        parakeetModelManager.startDownload(force: force)
     }
 
     private func cancelDownload() {

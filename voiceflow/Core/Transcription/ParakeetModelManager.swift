@@ -113,6 +113,14 @@ protocol ParakeetModelProviding: AnyObject {
     var selectedVariant: ParakeetModelVariant { get }
 }
 
+typealias ParakeetDownloadOperation = @Sendable (
+    URL,
+    Bool,
+    AsrModelVersion,
+    ParakeetEncoderPrecision,
+    @escaping @Sendable (DownloadProgress) -> Void
+) async throws -> URL
+
 @MainActor
 @Observable
 final class ParakeetModelManager: ParakeetModelProviding {
@@ -129,14 +137,29 @@ final class ParakeetModelManager: ParakeetModelProviding {
     private(set) var isLoading = false
     private(set) var progress = 0.0
     private(set) var validation: ParakeetModelValidation
+    private(set) var errorMessage: String?
+    private(set) var isCancelling = false
+    private var downloadTask: Task<Void, Never>?
+    private var operationID = 0
+    private let downloadOperation: ParakeetDownloadOperation
     var onVariantChanged: (() -> Void)?
 
     init(
         fileManager: FileManager = .default,
-        userDefaults: UserDefaults = .standard
+        userDefaults: UserDefaults = .standard,
+        downloadOperation: @escaping ParakeetDownloadOperation = { directory, force, version, precision, progressHandler in
+            try await AsrModels.download(
+                to: directory,
+                force: force,
+                version: version,
+                encoderPrecision: precision,
+                progressHandler: progressHandler
+            )
+        }
     ) {
         self.fileManager = fileManager
         self.userDefaults = userDefaults
+        self.downloadOperation = downloadOperation
         let rawVariant = userDefaults.string(forKey: Self.selectedVariantKey)
         let variant = ParakeetModelVariant(rawValue: rawVariant ?? "") ?? .v3
         self.selectedVariant = variant
@@ -185,6 +208,45 @@ final class ParakeetModelManager: ParakeetModelProviding {
         isInstalled = validation.isComplete
     }
 
+    func startDownload(force: Bool = false) {
+        guard !isLoading else { return }
+        operationID += 1
+        let operation = operationID
+        errorMessage = nil
+        isCancelling = false
+        downloadTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await self.download(force: force) { [weak self] value in
+                    guard let self, self.operationID == operation else { return }
+                    self.progress = value
+                }
+                guard self.operationID == operation else { return }
+                self.errorMessage = nil
+            } catch is CancellationError {
+                guard self.operationID == operation else { return }
+                self.refresh()
+            } catch {
+                guard self.operationID == operation else { return }
+                self.refresh()
+                self.errorMessage = error.localizedDescription
+            }
+            guard self.operationID == operation else { return }
+            self.isCancelling = false
+            self.downloadTask = nil
+        }
+    }
+
+    func cancelDownload() {
+        guard isLoading, !isCancelling else { return }
+        isCancelling = true
+        downloadTask?.cancel()
+    }
+
+    func dismissError() {
+        errorMessage = nil
+    }
+
     func download(
         force: Bool = false,
         progress progressHandler: @escaping @MainActor (Double) -> Void
@@ -205,12 +267,13 @@ final class ParakeetModelManager: ParakeetModelProviding {
         )
 
         do {
-            _ = try await AsrModels.download(
-                to: directory,
-                force: force,
-                version: variant.asrVersion,
-                encoderPrecision: variant.encoderPrecision,
-                progressHandler: { update in
+            try Task.checkCancellation()
+            _ = try await downloadOperation(
+                directory,
+                force,
+                variant.asrVersion,
+                variant.encoderPrecision,
+                { update in
                     Task { @MainActor in
                         self.progress = min(max(update.fractionCompleted, 0), 1)
                         progressHandler(self.progress)
@@ -218,6 +281,7 @@ final class ParakeetModelManager: ParakeetModelProviding {
                 }
             )
 
+            try Task.checkCancellation()
             let structuralValidation = Self.validation(
                 at: directory,
                 variant: variant,
@@ -256,6 +320,10 @@ final class ParakeetModelManager: ParakeetModelProviding {
             )
         } catch {
             isInstalled = false
+            if Task.isCancelled {
+                refresh()
+                throw CancellationError()
+            }
             if !(error is ParakeetModelError) {
                 validation = Self.validation(at: directory, variant: variant, fileManager: fileManager)
             }

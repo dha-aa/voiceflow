@@ -140,7 +140,7 @@ xcodebuild \
   CODE_SIGNING_ALLOWED=NO
 ```
 
-The current suite contains **141 tests** covering the recording stage, pipeline coordination, model management, transcription session behavior, text injection, overlay state, provider-aware overlay status, onboarding permission flow, AI provider/model persistence, custom-prefix routing, Grammar Fix precedence, provider-neutral request handling, selected-text forwarding, broad-context suppression when selected text exists, no-selection fallback, optional screen-context forwarding, Claude model-list decoding, Parakeet session reuse and error mapping, persisted speech-engine selection, router dispatch, and related regressions. See [`docs/testing.md`](docs/testing.md) for the full verification matrix.
+The current suite contains **142 tests** covering the recording stage, pipeline coordination, model management, transcription session behavior, text injection, overlay state, provider-aware overlay status, onboarding permission flow, AI provider/model persistence, custom-prefix routing, Grammar Fix precedence, provider-neutral request handling, selected-text forwarding, broad-context suppression when selected text exists, no-selection fallback, optional screen-context forwarding, Claude model-list decoding, Parakeet session reuse and error mapping, persisted speech-engine selection, router dispatch, and related regressions. See [`docs/testing.md`](docs/testing.md) for the full verification matrix.
 
 Build a local unsigned app bundle into `build/` with the convenience script:
 

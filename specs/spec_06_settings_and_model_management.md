@@ -211,7 +211,7 @@ Do not begin Specification 07 until all Settings tests pass, all four panes are 
 
 ## 11. Speech-engine selection and Parakeet model controls
 
-The Models pane exposes a **Speech recognition** picker backed by `SpeechRecognitionSettings`. The persisted choices are `WhisperKit` (default) and `Parakeet`. A second picker appears when Parakeet is selected and persists `ParakeetModelVariant.v3` or `.v2` through `ParakeetModelManager`. Changing the speech engine or Parakeet variant updates the shared `SpeechTranscriptionRouter` and preload lifecycle; it does not alter the Claude/ChatGPT AI-provider setting.
+The Models pane places its speech-engine controls and model content inside the pane’s scrollable region so long diagnostics, validation messages, and model rows do not overflow the fixed Settings window. It exposes a **Speech recognition** picker backed by `SpeechRecognitionSettings`. The persisted choices are `WhisperKit` (default) and `Parakeet`. A second picker appears when Parakeet is selected and persists `ParakeetModelVariant.v3` or `.v2` through `ParakeetModelManager`. Changing the speech engine or Parakeet variant updates the shared `SpeechTranscriptionRouter` and preload lifecycle; it does not alter the Claude/ChatGPT AI-provider setting.
 
 When Parakeet is selected, the pane identifies the selected variant, its language coverage, FluidAudio/Core ML provenance, canonical folder, and validation status. The supported sources are the FluidInference v3 and v2 Core ML conversions. The NVIDIA upstream NeMo/Transformers repositories are shown as lineage references only and are not importable into this path. If a folder contains `.nemo`, `model.safetensors`, or other detected upstream markers, the UI explains that it is the wrong format rather than reporting only a generic invalid-model message.
 
@@ -222,7 +222,7 @@ The canonical Parakeet cache is app-owned and rooted below `Application Support/
 | v3 | `parakeet-tdt-0.6b-v3` | `AsrModels.load(... version: .v3, encoderPrecision: .int8)` |
 | v2 | `parakeet-tdt-0.6b-v2` | `AsrModels.load(... version: .v2, encoderPrecision: .int8)` |
 
-**Download** invokes `ParakeetModelManager`, uses FluidAudio’s repository-aware download path, reports progress, structurally checks the exact required artifacts, checks compiled bundle contents, and performs a FluidAudio load validation before marking the variant installed. A partial, malformed, upstream-source, or load-failing folder remains uninstalled. A **Repair** action force-removes the selected incomplete folder and downloads the supported conversion again. **Open Folder** opens the selected variant’s canonical directory in Finder.
+**Download** invokes `ParakeetModelManager`, uses FluidAudio’s repository-aware download path, reports progress, and exposes **Cancel** while the operation is active. Download state is manager-owned, so switching Settings tabs does not cancel or erase it. Cancellation propagates to the underlying task; the UI shows **Cancelling…** until cleanup finishes, then refreshes the selected variant without marking it installed. The manager structurally checks the exact required artifacts, checks compiled bundle contents, and performs a FluidAudio load validation before marking the variant installed. A partial, malformed, upstream-source, or load-failing folder remains uninstalled. A **Repair** action force-removes the selected incomplete folder and downloads the supported conversion again. **Open Folder** opens the selected variant’s canonical directory in Finder.
 
 Parakeet model loading and inference are owned by `ParakeetTranscriptionEngine`, not by the SwiftUI view. The router preloads the selected engine and `RecordingCoordinator` waits for the selected engine’s readiness before starting the microphone. Selecting WhisperKit continues to use `ModelManager`, the existing WhisperKit catalog, and the long-lived WhisperKit download coordinator. Selecting Parakeet never silently uses a WhisperKit model, and selecting WhisperKit leaves Parakeet files untouched.
 
@@ -234,5 +234,7 @@ Manual Settings acceptance additions:
 - Switching to Parakeet shows the selected variant, source provenance, canonical folder, status, and progress without changing WhisperKit catalog state.
 - An incomplete v3 folder reports the missing exact artifacts, an incomplete compiled bundle reports missing Core ML contents, and an NVIDIA source folder reports the detected source markers.
 - A valid Parakeet model can be loaded before recording; a missing or invalid model cannot produce a false-ready state.
+- The Models pane remains usable at the fixed Settings size because the speech-engine controls, validation diagnostics, and model rows scroll instead of expanding the window.
+- A Parakeet download shows progress and a visible Cancel action; cancellation returns to a retryable not-installed state and never claims success.
 - The Repair action recreates only the selected Parakeet cache folder and never touches WhisperKit models.
 - Switching back to WhisperKit restores the existing selected Whisper model and preload behavior.

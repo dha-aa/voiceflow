@@ -9,6 +9,33 @@ import XCTest
 
 @MainActor
 final class ParakeetTranscriptionEngineTests: XCTestCase {
+    func test_cancelDownloadResetsStateWithoutReportingInstallation() async throws {
+        let started = expectation(description: "download started")
+        let cancellationObserved = expectation(description: "cancellation observed")
+        let operation: ParakeetDownloadOperation = { _, _, _, _, _ in
+            started.fulfill()
+            do {
+                try await Task.sleep(for: .seconds(30))
+                XCTFail("The injected download should have been cancelled")
+            } catch is CancellationError {
+                cancellationObserved.fulfill()
+                throw CancellationError()
+            }
+            throw CancellationError()
+        }
+        let manager = ParakeetModelManager(downloadOperation: operation)
+
+        manager.startDownload()
+        await fulfillment(of: [started], timeout: 1)
+        manager.cancelDownload()
+        await fulfillment(of: [cancellationObserved], timeout: 1)
+        try await Task.sleep(for: .milliseconds(50))
+
+        XCTAssertFalse(manager.isLoading)
+        XCTAssertFalse(manager.isInstalled)
+        XCTAssertFalse(manager.isCancelling)
+    }
+
     func test_variantSelectionPersists() {
         let suiteName = "ParakeetModelManagerTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
