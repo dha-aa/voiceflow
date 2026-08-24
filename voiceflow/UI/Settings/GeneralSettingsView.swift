@@ -29,12 +29,7 @@ struct GeneralSettingsView: View {
     @AppStorage(VoiceFlowSettingsDefaults.showRecordingOverlayKey) private var showRecordingOverlay = true
     @AppStorage(VoiceFlowSettingsDefaults.playCompletionSoundKey) private var playCompletionSound = false
     @AppStorage(VoiceFlowSettingsDefaults.completionSoundEffectKey) private var completionSoundEffect = CompletionSoundEffect.tink.rawValue
-    @AppStorage(ClaudeSettings.enabledKey) private var claudeCommandsEnabled = false
-    @AppStorage(ClaudeSettings.modelKey) private var claudeModel = ClaudeSettings.defaultModel
     @State private var launchAtLoginError: String?
-    @State private var claudeAPIKey = ""
-    @State private var hasClaudeAPIKey = false
-    @State private var claudeKeyMessage: String?
 
     var body: some View {
         Form {
@@ -88,60 +83,11 @@ struct GeneralSettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section("Claude commands") {
-                Toggle("Enable Claude commands", isOn: $claudeCommandsEnabled)
-                Text("Start a spoken request with “Claude” to send the remaining text to Anthropic. Normal dictation remains local.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                TextField("Claude model ID", text: $claudeModel)
-                    .textFieldStyle(.roundedBorder)
-                    .disabled(!claudeCommandsEnabled)
-
-                SecureField("Anthropic API key", text: $claudeAPIKey)
-                    .textFieldStyle(.roundedBorder)
-                    .disabled(!claudeCommandsEnabled)
-
-                HStack {
-                    Button("Save API key") {
-                        saveClaudeAPIKey()
-                    }
-                    .disabled(claudeAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-                    if hasClaudeAPIKey {
-                        Button("Remove key", role: .destructive) {
-                            removeClaudeAPIKey()
-                        }
-                    }
-                }
-
-                if hasClaudeAPIKey {
-                    Label("API key saved in macOS Keychain", systemImage: "checkmark.circle")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("Add an Anthropic API key before enabling Claude commands.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                if let claudeKeyMessage {
-                    Text(claudeKeyMessage)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
         }
         .formStyle(.grouped)
         .padding(24)
         .navigationTitle("General")
-        .task {
-            do {
-                hasClaudeAPIKey = try KeychainClaudeAPIKeyStore().read() != nil
-            } catch {
-                claudeKeyMessage = "Could not read the Claude API key from Keychain."
-            }
-        }
+
     }
 
     private var isLaunchAtLoginEnabled: Bool {
@@ -163,29 +109,6 @@ struct GeneralSettingsView: View {
         }
     }
 
-    private func saveClaudeAPIKey() {
-        let trimmedKey = claudeAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedKey.isEmpty else { return }
-        do {
-            try KeychainClaudeAPIKeyStore().save(trimmedKey)
-            claudeAPIKey = ""
-            hasClaudeAPIKey = true
-            claudeKeyMessage = "API key saved securely."
-        } catch {
-            claudeKeyMessage = "Could not save the Claude API key to Keychain."
-        }
-    }
-
-    private func removeClaudeAPIKey() {
-        do {
-            try KeychainClaudeAPIKeyStore().remove()
-            claudeAPIKey = ""
-            hasClaudeAPIKey = false
-            claudeKeyMessage = "API key removed."
-        } catch {
-            claudeKeyMessage = "Could not remove the Claude API key from Keychain."
-        }
-    }
 
     private func setLaunchAtLogin(_ enabled: Bool) {
         do {

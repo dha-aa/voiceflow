@@ -24,8 +24,8 @@ VoiceFlow is a privacy-first native macOS menu-bar dictation application. Hold *
 | Recording overlay | A compact floating HUD communicates Loading model, Listening, Processing, Done, and error states. |
 | Menu-bar status | The menu-bar icon reflects idle, recording, processing, completion, and error states. The idle identity mark is a native template image for Light and Dark Mode contrast. |
 | Completion feedback | General settings can enable a short completion sound and select Tink, Pop, or Glass. It is disabled by default and only plays after successful injection. |
-| Settings | General, Models, and About sections are available from the menu-bar application. |
-| Privacy-safe diagnostics | Structured logs contain lifecycle metadata such as model identifiers, paths, durations, byte counts, and error categories—not audio, transcripts, or inserted text. |
+| Settings | General, AI, Models, and About sections are available from the menu-bar application. |
+| Privacy-safe diagnostics | Structured logs contain lifecycle metadata such as model identifiers, paths, durations, byte counts, and error categories—not audio, prompts, responses, transcripts, or inserted text. |
 
 ## Expected interaction
 
@@ -82,7 +82,7 @@ WhisperKit’s downloaded repository layout is nested below that root under `mod
 | `voiceflow/Core/Logging/` | Privacy-safe structured logging. |
 | `voiceflow/UI/MenuBar/` | Menu-bar item, template icon behavior, and popover presentation. |
 | `voiceflow/UI/Overlay/` | Recording HUD, state mapping, animation, and waveform display. |
-| `voiceflow/UI/Settings/` | General, Models, About, download coordination, and Settings window behavior. |
+| `voiceflow/UI/Settings/` | General, AI, Models, About, download coordination, and Settings window behavior. |
 | `voiceflowTests/` | Unit, integration, model lifecycle, injection, overlay, and settings regression tests. |
 | `specs/` | Product and implementation specifications for the completed work. |
 | `scripts/release.sh` | Shared local release script for signed or unsigned DMGs. |
@@ -92,15 +92,15 @@ WhisperKit’s downloaded repository layout is nested below that root under `mod
 
 ## Privacy and security model
 
-VoiceFlow’s normal recording-to-injection path is local. Network access is used for model catalog and model downloads, not for sending captured audio or dictated text for remote transcription. Do not add telemetry, remote transcription, or transcript-bearing diagnostics without a separate privacy review.
+VoiceFlow’s normal recording-to-injection path is local. Network access is used for model catalog and model downloads, not for sending captured audio for remote transcription. An explicit, user-enabled Claude command is the only exception for dictated text: when enabled and the transcript begins with `Claude`, only the command remainder is sent to Anthropic. Do not add telemetry, remote transcription, or transcript-bearing diagnostics without a separate privacy review.
 
 Logs must remain metadata-only. Safe examples include model IDs, model paths, audio file identifiers, file sizes, durations, state names, process identifiers, and error categories. Do not log microphone samples, audio contents, raw transcripts, inserted text, clipboard contents, or secret environment variables.
 
 The app is intentionally non-sandboxed because the current implementation uses global Fn monitoring and cross-process Accessibility text injection. The Release target enables Hardened Runtime and carries only the microphone entitlement required by the app’s current design.
 
-### Optional Claude commands
+### AI settings and optional Claude commands
 
-To enable Claude processing, open **Settings → General → Claude commands**, enable **Enable Claude commands**, enter an Anthropic API key, and save it. VoiceFlow stores the key in the macOS Keychain, not in UserDefaults, source files, logs, or model files. The default model is editable in Settings and is initialized to `claude-sonnet-5`; use a model ID available to your Anthropic account. Anthropic documents direct requests with the `x-api-key` header, the `anthropic-version: 2023-06-01` header, and `POST https://api.anthropic.com/v1/messages`.[4]
+Open **Settings → AI** to choose the default AI provider. Claude is currently the only implemented provider; ChatGPT is shown as a future provider and does not make OpenAI requests in this version. Enable Claude commands, enter an Anthropic API key, and save it. VoiceFlow stores the key in the macOS Keychain, not in UserDefaults, source files, logs, or model files. The Claude model is selected per provider and can be entered manually or fetched from Anthropic with **Fetch available models**. The initial fallback is `claude-sonnet-5`; use a model ID available to your Anthropic account. Anthropic documents the model-list operation and direct Messages API request headers.[4] [5]
 
 When enabled, a spoken transcript beginning with `Claude` routes only the remaining text to Claude. For example, `Claude, rewrite this politely` sends `rewrite this politely`; normal dictation does not call the network. Claude’s returned text is then sent through the existing injection path. Microphone audio and the ordinary local transcription remain local, but the explicitly routed text is intentionally sent to Anthropic using the user’s own key. VoiceFlow logs only provider/model identifiers, character counts, durations, and error categories—not API keys, prompts, responses, audio, or injected text.
 
@@ -122,7 +122,7 @@ xcodebuild \
   CODE_SIGNING_ALLOWED=NO
 ```
 
-The current suite contains **102 tests** covering the recording stage, pipeline coordination, model management, transcription session behavior, text injection, overlay state, settings persistence, and related regressions. See [`docs/testing.md`](docs/testing.md) for the full verification matrix.
+The current suite contains **114 tests** covering the recording stage, pipeline coordination, model management, transcription session behavior, text injection, overlay state, AI provider/model persistence, Claude model-list decoding, and related regressions. See [`docs/testing.md`](docs/testing.md) for the full verification matrix.
 
 Build a local unsigned app bundle into `build/` with the convenience script:
 
@@ -168,3 +168,4 @@ The unsigned workflow can publish a DMG to GitHub Releases without Apple credent
 [2]: https://developer.apple.com/documentation/security/customizing-the-notarization-workflow "Apple: Customizing the notarization workflow"
 [3]: https://support.apple.com/en-gb/guide/mac-help/mh40616/mac "Apple Support: Safely open apps on Mac"
 [4]: https://platform.claude.com/docs/en/manage-claude/authentication "Anthropic: Claude API authentication"
+[5]: https://platform.claude.com/docs/en/api/models/list "Anthropic: List Models API"

@@ -8,6 +8,7 @@ import SwiftUI
 struct SettingsView: View {
     enum Destination: String, CaseIterable, Identifiable, Hashable {
         case general
+        case ai
         case models
         case about
 
@@ -16,6 +17,7 @@ struct SettingsView: View {
         var title: String {
             switch self {
             case .general: "General"
+            case .ai: "AI"
             case .models: "Models"
             case .about: "About"
             }
@@ -24,6 +26,7 @@ struct SettingsView: View {
         var systemImage: String {
             switch self {
             case .general: "gearshape"
+            case .ai: "sparkles"
             case .models: "cpu"
             case .about: "info.circle"
             }
@@ -71,7 +74,9 @@ struct SettingsView: View {
         switch destination {
         case .general:
             GeneralSettingsView()
-                        case .models:
+        case .ai:
+            AISettingsView()
+        case .models:
                     ModelsSettingsView(
                         modelManager: modelManager,
                         downloadCoordinator: downloadCoordinator

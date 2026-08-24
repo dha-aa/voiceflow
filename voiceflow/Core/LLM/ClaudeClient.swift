@@ -26,77 +26,39 @@ enum ClaudeKeychainError: Error {
 }
 
 final class KeychainClaudeAPIKeyStore: ClaudeAPIKeyStore {
-    private let service: String
-    private let account = "anthropic-api-key"
+    private let store: KeychainAPIKeyStore
 
     init(service: String = Bundle.main.bundleIdentifier ?? "dha-aa.voiceflow") {
-        self.service = service
+        store = KeychainAPIKeyStore(provider: .claude, service: service)
     }
 
     func read() throws -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status != errSecItemNotFound else { return nil }
-        guard status == errSecSuccess,
-              let data = result as? Data,
-              let value = String(data: data, encoding: .utf8),
-              !value.isEmpty else {
-            throw ClaudeKeychainError.readFailed(status)
-        }
-        return value
+        try store.read()
     }
 
     func save(_ apiKey: String) throws {
-        try remove()
-        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedKey.isEmpty,
-              let data = trimmedKey.data(using: .utf8) else {
-            return
-        }
-        let attributes: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        ]
-        let status = SecItemAdd(attributes as CFDictionary, nil)
-        guard status == errSecSuccess else {
-            throw ClaudeKeychainError.saveFailed(status)
-        }
+        try store.save(apiKey)
     }
 
     func remove() throws {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-        let status = SecItemDelete(query as CFDictionary)
-        guard status == errSecSuccess || status == errSecItemNotFound else {
-            throw ClaudeKeychainError.removeFailed(status)
-        }
+        try store.remove()
     }
 }
 
 enum ClaudeSettings {
-    static let enabledKey = "claudeCommandsEnabled"
-    static let modelKey = "claudeModel"
-    static let defaultModel = "claude-sonnet-5"
+    static let enabledKey = AISettings.commandsEnabledKey
+    static let modelKey = AISettings.modelKey(for: .claude)
+    static let legacyModelKey = AISettings.legacyClaudeModelKey
+    static let defaultModel = AISettings.defaultClaudeModel
 
     static func isEnabled(in defaults: UserDefaults = .standard) -> Bool {
         defaults.object(forKey: enabledKey) as? Bool ?? false
     }
 
     static func model(in defaults: UserDefaults = .standard) -> String {
-        let value = defaults.string(forKey: modelKey)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let currentValue = defaults.string(forKey: modelKey)
+        let legacyValue = defaults.string(forKey: legacyModelKey)
+        let value = (currentValue ?? legacyValue)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return value.isEmpty ? defaultModel : value
     }
 }
@@ -125,6 +87,7 @@ struct ClaudeCommandProcessor {
 
     func processIfRequested(_ text: String) async throws -> String? {
         guard ClaudeSettings.isEnabled(in: userDefaults),
+              AISettings.selectedProvider(in: userDefaults) == .claude,
               let command = ClaudeCommand.parse(text) else {
             return nil
         }
@@ -142,7 +105,7 @@ struct ClaudeCommandProcessor {
             throw ClaudeCommandError.emptyResponse
         }
 
-        let model = ClaudeSettings.model(in: userDefaults)
+        let model = AISettings.selectedModel(for: .claude, in: userDefaults)
         let startedAt = Date()
         VoiceFlowLog.llm.info("claude_request_started model_id=\(model, privacy: .public) prompt_character_count=\(command.prompt.count, privacy: .public)")
         do {

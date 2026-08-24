@@ -13,9 +13,9 @@ final class SettingsNavigationTests: XCTestCase {
     func test_settingsDestinations_includeAllPanes() {
         let destinations = SettingsView.Destination.allCases
 
-        XCTAssertEqual(destinations, [.general, .models, .about])
-        XCTAssertEqual(Set(destinations.map(\.title)), ["General", "Models", "About"])
-        XCTAssertEqual(Set(destinations.map(\.systemImage)).count, 3)
+        XCTAssertEqual(destinations, [.general, .ai, .models, .about])
+        XCTAssertEqual(Set(destinations.map(\.title)), ["General", "AI", "Models", "About"])
+        XCTAssertEqual(Set(destinations.map(\.systemImage)).count, 4)
     }
 
     func test_settingsView_canBeConstructed() {
@@ -78,6 +78,40 @@ final class GeneralSettingsTests: XCTestCase {
     func test_generalSettingsView_canBeConstructed() {
         _ = GeneralSettingsView()
         XCTAssertTrue(true)
+    }
+
+    func test_aiSettings_defaultsToClaudeAndUsesPerProviderModelKeys() {
+        let defaults = UserDefaults(suiteName: "ai-settings-default-\(UUID().uuidString)")!
+
+        XCTAssertEqual(AISettings.selectedProvider(in: defaults), .claude)
+        XCTAssertEqual(AISettings.selectedModel(for: .claude, in: defaults), ClaudeSettings.defaultModel)
+
+        defaults.set(AIProvider.chatGPT.rawValue, forKey: AISettings.selectedProviderKey)
+        defaults.set("gpt-test-model", forKey: AISettings.modelKey(for: .chatGPT))
+
+        XCTAssertEqual(AISettings.selectedProvider(in: defaults), .chatGPT)
+        XCTAssertEqual(AISettings.selectedModel(for: .chatGPT, in: defaults), "gpt-test-model")
+    }
+
+    func test_aiSettings_migratesLegacyClaudeModelValue() {
+        let defaults = UserDefaults(suiteName: "ai-settings-migration-\(UUID().uuidString)")!
+        defaults.set("legacy-claude-model", forKey: AISettings.legacyClaudeModelKey)
+
+        XCTAssertEqual(AISettings.selectedModel(for: .claude, in: defaults), "legacy-claude-model")
+    }
+
+    func test_aiSettingsView_canBeConstructed() {
+        _ = AISettingsView()
+        XCTAssertTrue(true)
+    }
+
+    func test_claudeModelCatalog_decodesAndSortsModels() throws {
+        let data = #"{"data":[{"id":"claude-z","display_name":"Zeta"},{"id":"claude-a","display_name":"Alpha"},{"id":"claude-no-name"}]}"#.data(using: .utf8)!
+
+        let models = try LiveClaudeModelCatalogClient.decodeModels(from: data)
+
+        XCTAssertEqual(models.map(\.id), ["claude-a", "claude-no-name", "claude-z"])
+        XCTAssertEqual(models.first(where: { $0.id == "claude-no-name" })?.displayName, "claude-no-name")
     }
 }
 

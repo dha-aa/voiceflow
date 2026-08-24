@@ -4,7 +4,7 @@
 
 Specification 06 adds the administrative UI on top of the complete core pipeline and overlay from Specifications 01–05. It is a consumer of the existing `ModelManager`, `AppStateManager`, overlay preference contract, and menu-bar popover. It must not recreate the status item, replace the `NSPopover`, or change recording/transcription/injection behavior.
 
-The current Settings window has three destinations: **General**, **Models**, and **About**. The implementation uses explicit sidebar buttons because relying on implicit `NavigationSplitView` list selection caused the original sections to be non-clickable.
+The current Settings window has four destinations: **General**, **AI**, **Models**, and **About**. The implementation uses explicit sidebar buttons because relying on implicit `NavigationSplitView` list selection caused the original sections to be non-clickable.
 
 ## 1. Goals
 
@@ -13,6 +13,8 @@ The Settings layer must let users:
 - Understand the always-enabled Fn push-to-talk behavior.
 - Enable or disable launch at login through `SMAppService.mainApp`.
 - Enable/disable the recording overlay and configure success feedback.
+- Choose the default AI provider, configure Claude securely, and persist the selected model.
+- Fetch the Claude model list from Anthropic after the user requests a refresh.
 - Refresh the live WhisperKit model catalog.
 - Download models with persistent progress and cancellation.
 - Import a local WhisperKit Core ML model folder through a native folder picker.
@@ -27,8 +29,9 @@ The Settings layer must let users:
 | Component | Location | Current responsibility |
 |---|---|---|
 | `SettingsWindowController` | `voiceflow/UI/Settings/SettingsWindowController.swift` | Singleton Settings window lifecycle and fixed geometry |
-| `SettingsView` | `voiceflow/UI/Settings/SettingsView.swift` | Three-destination sidebar and detail routing |
+| `SettingsView` | `voiceflow/UI/Settings/SettingsView.swift` | Four-destination sidebar and detail routing |
 | `GeneralSettingsView` | `voiceflow/UI/Settings/GeneralSettingsView.swift` | General preferences and launch-at-login |
+| `AISettingsView` | `voiceflow/UI/Settings/AISettingsView.swift` | Provider selection, Claude credentials, model selection, and model refresh |
 | `ModelsSettingsView` | `voiceflow/UI/Settings/ModelsSettingsView.swift` | Model catalog, download/import actions, progress, alerts, and Finder access |
 | `ModelDownloadCoordinator` | `voiceflow/UI/Settings/ModelDownloadCoordinator.swift` | Long-lived download task, progress, cancel, and error state |
 | `AboutSettingsView` | `voiceflow/UI/Settings/AboutSettingsView.swift` | Branding, metadata, links, and license |
@@ -42,7 +45,7 @@ The AppDelegate passes the shared `ModelManager` to `SettingsWindowController.sh
 
 Each `show(modelManager:)` call updates the retained manager, reuses the download coordinator when the manager is unchanged, recreates the SwiftUI root view, resets the window geometry to the intended size, brings it frontmost, and activates the application. This prevents the window from shrinking after switching tabs or reopening it.
 
-`SettingsView.Destination` is the `Hashable` enum `general`, `models`, and `about`. The sidebar uses explicit `Button` controls with a visual selection background. The detail pane renders exactly one of `GeneralSettingsView`, `ModelsSettingsView`, or `AboutSettingsView`.
+`SettingsView.Destination` is the `Hashable` enum `general`, `ai`, `models`, and `about`. The sidebar uses explicit `Button` controls with a visual selection background. The detail pane renders exactly one of `GeneralSettingsView`, `AISettingsView`, `ModelsSettingsView`, or `AboutSettingsView`.
 
 ## 4. General settings
 
@@ -53,18 +56,23 @@ Each `show(modelManager:)` call updates the retained manager, reuses the downloa
 | `showRecordingOverlay` | `true` | Controls whether the transient overlay is shown |
 | `playCompletionSound` | `false` | Controls success-only completion audio |
 | `completionSoundEffect` | `Tink` | Selected `CompletionSoundEffect` raw value |
-| `claudeCommandsEnabled` | `false` | Enables explicit spoken Claude commands |
-| `claudeModel` | `claude-sonnet-5` | Anthropic model ID used for Claude requests |
 
 The pane contains these sections:
 
 - **Push-to-Talk:** displays `Hold Fn to Talk`, `Enabled`, and `Hold Fn to record. Release Fn to transcribe.` The feature is currently always enabled and has no toggle.
 - **Startup:** controls `Launch VoiceFlow at Login` through `SMAppService.mainApp.register()` and `.unregister()`. It displays enabled, approval-required, not-registered, or unavailable status and shows registration errors inline.
 - **Feedback:** controls `Play completion sound` and a disabled-until-enabled picker containing `Tink`, `Pop`, and `Glass`. The actual playback remains owned by `InjectionCoordinator` and occurs only after successful injection.
-- **Claude commands:** controls `Enable Claude commands`, the editable Anthropic model ID, and a secure API-key field. Saving writes the key to the macOS Keychain; UserDefaults stores only the enabled flag and model ID. The UI never displays the stored key after saving. The feature is disabled by default. When enabled, only transcripts beginning with `Claude` are sent to Anthropic; ordinary dictation remains local.
 - **Appearance:** controls `Show recording overlay when recording` and explains that the overlay does not take focus.
 
-Changing the overlay setting takes effect through `UserDefaults.didChangeNotification` without relaunching. Completion sound preferences are read by the injection coordinator and persist across launches. Claude enabled/model preferences persist through UserDefaults, while the API key is stored and removed through Keychain operations.
+Changing the overlay setting takes effect through `UserDefaults.didChangeNotification` without relaunching. Completion sound preferences are read by the injection coordinator and persist across launches.
+
+### AI settings
+
+`AISettingsView` is the single settings surface for AI provider configuration. `AIProvider` currently contains `claude` and a disabled `chatGPT` future case. The selected provider is persisted in `aiSelectedProvider`, defaulting to Claude. Provider model selections use per-provider keys such as `aiModel.claude`; the prior `claudeModel` key is read as a migration fallback. Claude commands remain disabled by default through `claudeCommandsEnabled`.
+
+Claude API keys are saved only through the provider-neutral `KeychainAPIKeyStore`, using a provider-specific Keychain account (`anthropic-api-key` for Claude). The AI pane never displays the stored secret. Claude’s model can be entered manually or refreshed through the user-triggered **Fetch available models** action, which calls Anthropic’s authenticated `GET /v1/models` endpoint and presents the returned model IDs/display names. The last successful list is kept in view; a refresh failure does not erase the manually selected model. ChatGPT has no active key, model-list request, or generation path yet and must be presented as coming soon rather than as an operational provider.
+
+A Claude command is eligible for routing only when Claude commands are enabled and Claude is the selected provider. The existing transcription coordinator continues to perform local WhisperKit transcription first, then routes an explicit leading `Claude` command through the selected Claude model before handing the final text to injection.
 
 ## 5. Models pane
 
@@ -113,7 +121,7 @@ The pane is informational and does not perform model or pipeline actions.
 
 The current Settings tests are in `voiceflowTests/UI/SettingsTests.swift` and cover:
 
-- All three destinations and constructible root view.
+- All four destinations and constructible root view.
 - Overlay default and persistence.
 - Completion sound default, persistence, and effect selection.
 - Installed/available model rendering and active selection persistence.
@@ -125,7 +133,7 @@ The current Settings tests are in `voiceflowTests/UI/SettingsTests.swift` and co
 Manual verification must confirm:
 
 1. Settings opens from the popover and closes without terminating VoiceFlow.
-2. General, Models, and About sidebar controls are all clickable.
+2. General, AI, Models, and About sidebar controls are all clickable.
 3. Reopening Settings restores the intended window size rather than shrinking based on the selected pane.
 4. Launch-at-login can be toggled and errors are shown without a crash.
 5. Completion sound defaults off, the picker is disabled while off, and Tink/Pop/Glass persist when selected.
@@ -135,22 +143,23 @@ Manual verification must confirm:
 9. Import Model accepts the Oriserve folder, shows import/validation progress, detects the installed model immediately, and rejects invalid or duplicate folders safely.
 10. A successful download or import is validated, load-checked, detected immediately, and reused by transcription.
 11. A failed structural or WhisperKit load validation is not shown as installed.
-12. Claude commands are disabled by default, the API key is saved only in Keychain, and the model ID is editable.
-13. A Claude-prefixed transcript sends only the remaining text to Anthropic and injects the returned text; a normal transcript never sends a network request.
-14. Finder opens the canonical app-owned model folder.
-15. Active-model deletion is blocked; inactive deletion requires confirmation.
-16. Selecting a different installed model triggers replacement/preload before the next recording.
-17. About shows correct metadata and links.
-18. The core TextEdit pipeline and overlay remain regression-free.
+12. The AI pane defaults to Claude, Claude commands are disabled by default, the API key is saved only in Keychain, and the Claude model ID is editable.
+13. Fetch available models uses the saved Claude key, updates the available Claude model choices, and leaves the current selection usable when the refresh fails.
+14. A Claude-prefixed transcript sends only the remaining text to Anthropic and injects the returned text; a normal transcript never sends a network request.
+15. Finder opens the canonical app-owned model folder.
+16. Active-model deletion is blocked; inactive deletion requires confirmation.
+17. Selecting a different installed model triggers replacement/preload before the next recording.
+18. About shows correct metadata and links.
+19. The core TextEdit pipeline and overlay remain regression-free.
 
 ## 9. Acceptance criteria
 
 - The singleton Settings window opens from the existing popover and does not terminate the app when closed.
-- General, Models, and About are selectable by explicit working controls.
+- General, AI, Models, and About are selectable by explicit working controls.
 - The window reopens at its intended 760×500 content size with the 680×420 minimum.
 - Launch-at-login uses `SMAppService.mainApp` and displays actionable errors.
 - Overlay preference defaults true and persists; completion sound defaults false and persists with Tink/Pop/Glass selection.
-- Claude commands default to disabled, use a Keychain-stored API key, expose an editable model ID, and route only the explicit `Claude` command remainder.
+- The AI pane defaults to Claude, Claude commands default to disabled, Claude uses a Keychain-stored API key, exposes an editable or fetched model choice, and routes only the explicit `Claude` command remainder. ChatGPT is visibly future work and makes no request.
 - Models are supplied by the live catalog and are not hardcoded in the UI.
 - Only preflight-valid, optionally real-load-validated models appear installed.
 - Download progress and cancellation survive navigation away from the Models pane.
@@ -170,14 +179,17 @@ Specification 07 receives a complete feature implementation with known persisten
 [1]: ../voiceflow/UI/Settings/SettingsWindowController.swift "Settings window lifecycle"
 [2]: ../voiceflow/UI/Settings/SettingsView.swift "Settings navigation"
 [3]: ../voiceflow/UI/Settings/GeneralSettingsView.swift "General settings and defaults"
-[4]: ../voiceflow/UI/Settings/ModelsSettingsView.swift "Models settings UI"
-[5]: ../voiceflow/UI/Settings/ModelDownloadCoordinator.swift "Persistent model download state"
-[6]: ../voiceflow/UI/Settings/AboutSettingsView.swift "About pane"
-[7]: ../voiceflow/UI/Popover/MenuBarPopoverView.swift "Menu-bar popover integration"
-[8]: ../voiceflow/Core/Transcription/ModelManager.swift "Canonical model lifecycle"
-[9]: ../voiceflow/Core/Transcription/TranscriptionEngine.swift "Model preload and replacement"
-[10]: ../voiceflowTests/UI/SettingsTests.swift "Settings and model-management tests"
-[11]: ../voiceflow/Core/Injection/InjectionCoordinator.swift "Completion sound persistence and playback"
+[4]: ../voiceflow/UI/Settings/AISettingsView.swift "AI provider and Claude settings UI"
+[5]: ../voiceflow/UI/Settings/ModelsSettingsView.swift "Models settings UI"
+[6]: ../voiceflow/UI/Settings/ModelDownloadCoordinator.swift "Persistent model download state"
+[7]: ../voiceflow/UI/Settings/AboutSettingsView.swift "About pane"
+[8]: ../voiceflow/UI/Popover/MenuBarPopoverView.swift "Menu-bar popover integration"
+[9]: ../voiceflow/Core/Transcription/ModelManager.swift "Canonical model lifecycle"
+[10]: ../voiceflow/Core/Transcription/TranscriptionEngine.swift "Model preload and replacement"
+[11]: ../voiceflowTests/UI/SettingsTests.swift "Settings and model-management tests"
+[12]: ../voiceflow/Core/Injection/InjectionCoordinator.swift "Completion sound persistence and playback"
+[13]: ../voiceflow/Core/LLM/AISettings.swift "AI provider settings and Keychain contracts"
+[14]: ../voiceflow/Core/LLM/AIModelCatalog.swift "Claude model discovery"
 
 ## Implementation inconsistency register
 
@@ -185,4 +197,4 @@ The historical specification expected an implicit `NavigationSplitView` list sel
 
 ## Completion gate
 
-Do not begin Specification 07 until all Settings tests pass, all three panes are manually verified, model download/validation/load/detection works on a real model, progress survives tab navigation, and the core pipeline remains operational after changing settings or the active model.
+Do not begin Specification 07 until all Settings tests pass, all four panes are manually verified, Claude key/model configuration and model refresh are checked with a user-owned key, model download/validation/load/detection works on a real model, progress survives tab navigation, and the core pipeline remains operational after changing settings or the active model.

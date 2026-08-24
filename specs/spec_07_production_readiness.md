@@ -40,7 +40,7 @@ The goal is not to claim that an unsigned artifact has the trust properties of a
 | Entitlements | Non-sandboxed app plus `com.apple.security.device.audio-input = true` |
 | App identity | `LSUIElement = true`, no Dock icon, menu-bar agent |
 | Local inference | WhisperKit 0.18.0, model files under app-owned Application Support storage |
-| Tests | 110 XCTest methods in the current test target after Claude integration coverage |
+| Tests | 114 XCTest methods in the current test target after AI settings/model-discovery coverage |
 | Privacy | No audio, spoken text, transcript, prompt, response, or injected content in logs; optional Claude requests are explicit and text-only |
 | Protected branch | `main` requires pull requests, approval, and the `CI Quality Gate` status check |
 
@@ -74,13 +74,13 @@ Successful injection transitions through `.completed` and then `.idle` after app
 
 ### Overlay and Settings
 
-The overlay is a non-activating 270×58 pt panel with a 252×48 pt single black capsule, no native panel shadow, and no outer backing/border artifact. `.preparingModel` displays Loading model; `.recording` displays Listening; `.processing` and `.injecting` display Processing; `.completed` displays Done for about 400 ms; errors display a short message. Settings navigation uses explicit buttons, model download progress survives tab changes, active-model deletion is blocked, and the Settings window resets to its intended size when reopened. [12] [13]
+The overlay is a non-activating 270×58 pt panel with a 252×48 pt single black capsule, no native panel shadow, and no outer backing/border artifact. `.preparingModel` displays Loading model; `.recording` displays Listening; `.processing` and `.injecting` display Processing; `.completed` displays Done for about 400 ms; errors display a short message. Settings navigation uses explicit buttons, model download progress survives tab changes, active-model deletion is blocked, and the Settings window resets to its intended size when reopened. The Settings window contains General, AI, Models, and About panes. The AI pane persists the selected provider and per-provider model IDs, stores Claude credentials only in Keychain, and lets the user refresh Claude’s model list through the authenticated provider API. ChatGPT is represented as future UI only and has no active request path. [12] [13] [14] [15]
 
 ## 4. Privacy and security requirements
 
 All microphone capture, temporary recordings, model files, and default WhisperKit inference remain local. The application must not send audio to a remote endpoint. Optional Claude processing is an explicit user-enabled exception: only the text after a leading `Claude` command is sent to Anthropic, and the UI/documentation must disclose that network boundary.
 
-Structured logs may contain only metadata needed for diagnosis, such as state names, model identifiers, canonical paths, process IDs, bundle identifiers, durations, byte counts, frame counts, progress, result character counts, and error categories. They must not contain audio samples, spoken phrases, raw transcription, injected text, or full clipboard contents. [14]
+Structured logs may contain only metadata needed for diagnosis, such as state names, model identifiers, canonical paths, process IDs, bundle identifiers, durations, byte counts, frame counts, progress, result character counts, and error categories. They must not contain audio samples, spoken phrases, raw transcription, Claude prompts, Claude responses, injected text, API keys, or full clipboard contents. [16]
 
 Temporary audio files are created in the system temporary directory and are released by the recorder after stopping. Test fixtures must use synthetic or controlled data and must clean up generated files. Signing certificates, private keys, provisioning profiles, App Store Connect keys, and personal tokens must not be committed or printed.
 
@@ -209,7 +209,7 @@ This guidance does not bypass macOS security silently and does not claim that th
 
 ## 11. Tests and final verification
 
-The current repository contains 110 XCTest methods distributed across state, audio, transcription, injection, overlay, Settings, LLM, package-import, and baseline tests. The complete test target is the primary regression gate. [19]
+The current repository contains 114 XCTest methods distributed across state, audio, transcription, injection, overlay, Settings, LLM, package-import, and baseline tests. The complete test target is the primary regression gate. [22]
 
 Final verification must include:
 
@@ -228,8 +228,9 @@ Final verification must include:
 - CI runs on PRs to `main` and reports a single required `CI Quality Gate` check.
 - Branch protection requires the CI check and pull-request approval before normal merging.
 - No dedicated lint/format tool is claimed unless one is actually configured; current repository quality checks remain documented.
-- Privacy-safe logging contains no audio, speech, transcript, Claude prompt, Claude response, or injected text.
-- Optional Claude processing is disabled by default, uses a Keychain-stored user key, sends only an explicit command remainder, and returns failures to a recoverable state.
+- Privacy-safe logging contains no audio, speech, transcript, Claude prompt, Claude response, API key, or injected text.
+- Optional Claude processing is disabled by default, uses a Keychain-stored user key, sends only an explicit command remainder, uses the configured Claude model, and returns failures to a recoverable state.
+- AI settings persist the selected provider and model. Claude model refresh uses the authenticated Models API; ChatGPT remains explicitly unimplemented and makes no request.
 - Known edge cases are mapped to safe errors or explicitly recorded as current limitations.
 - Model download → structural validation → exact-folder load validation → detection → preload → transcription remains consistent.
 - Completion sound remains success-only and disabled by default.
@@ -291,17 +292,21 @@ ModelManager ──→ TranscriptionEngine
 [9]: ../voiceflow/Core/Transcription/TranscriptionEngine.swift "WhisperKit session lifecycle"
 [10]: ../voiceflow/Core/Injection/TextInjector.swift "Accessibility-safe text injection"
 [11]: ../voiceflow/Core/Injection/InjectionCoordinator.swift "Completion state and sound"
-[12]: ../voiceflow/UI/Overlay/OverlayWindowController.swift "Overlay panel behavior"
-[13]: ../voiceflow/UI/Settings/SettingsWindowController.swift "Settings window lifecycle"
-[14]: ../voiceflow/Core/Logging/VoiceFlowLogger.swift "Privacy-safe logging categories"
-[15]: ../voiceflow/Core/State/AppState.swift "Shared error cases"
-[16]: ../voiceflow/UI/Overlay/RecordingOverlayView.swift "Overlay error messages"
-[17]: ../.github/workflows/ci.yml "Contributor CI quality gate"
-[18]: ../.github/workflows/release.yml "Release workflow"
-[19]: ../voiceflowTests "VoiceFlow XCTest target"
-[20]: https://developer.apple.com/documentation/security/notarizing_macos_software_before_distribution "Apple notarization guidance"
-[21]: ../voiceflow/Core/LLM/ClaudeClient.swift "Claude BYOK client and command processor"
-[22]: https://platform.claude.com/docs/en/manage-claude/authentication "Anthropic Claude API authentication"
+[12]: ../voiceflow/UI/Overlay/OverlayWindowController.swift "Overlay window behavior"
+[13]: ../voiceflow/UI/Settings/SettingsView.swift "Settings navigation"
+[14]: ../voiceflow/UI/Settings/AISettingsView.swift "AI settings UI"
+[15]: ../voiceflow/Core/LLM/AIModelCatalog.swift "Claude model discovery"
+[16]: ../voiceflow/Core/Logging/VoiceFlowLogger.swift "Privacy-safe logging"
+[17]: ../voiceflow/UI/Settings/SettingsWindowController.swift "Settings window lifecycle"
+[18]: ../voiceflow/Core/State/AppState.swift "Shared error cases"
+[19]: ../voiceflow/UI/Overlay/RecordingOverlayView.swift "Overlay error messages"
+[20]: ../.github/workflows/ci.yml "Contributor CI quality gate"
+[21]: ../.github/workflows/release.yml "Release workflow"
+[22]: ../voiceflowTests "VoiceFlow XCTest target"
+[23]: https://developer.apple.com/documentation/security/notarizing_macos_software_before_distribution "Apple notarization guidance"
+[24]: ../voiceflow/Core/LLM/ClaudeClient.swift "Claude BYOK client and command processor"
+[25]: https://platform.claude.com/docs/en/manage-claude/authentication "Anthropic Claude API authentication"
+[26]: https://platform.claude.com/docs/en/api/models/list "Anthropic List Models API"
 
 ## Implementation inconsistency register
 

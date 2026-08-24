@@ -12,7 +12,7 @@ Testing requires a Mac with macOS 14 or later and the full Xcode installation. T
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 ```
 
-The current automated baseline is **110 XCTest tests with zero failures**. Tests that require microphone, Accessibility, a live WhisperKit model, or another application are supplemented by manual verification rather than being made dependent on a particular user machine.
+The current automated baseline is **114 XCTest tests with zero failures**. Tests that require microphone, Accessibility, a live WhisperKit model, or another application are supplemented by manual verification rather than being made dependent on a particular user machine.
 
 ## Automated XCTest suite
 
@@ -35,7 +35,7 @@ xcodebuild \
 A successful run ends with output similar to:
 
 ```text
-Executed 110 tests, with 0 failures
+Executed 114 tests, with 0 failures
 ** TEST SUCCEEDED **
 ```
 
@@ -90,7 +90,7 @@ xcodebuild \
 | Text injection | Empty input, missing target, Accessibility failure, keyboard fallback behavior, and injector error mapping. |
 | Injection coordination | Processing/injecting/completed transitions, successful completion sound selection, disabled sound behavior, and no sound on failures. |
 | Overlay UI | Loading model, Listening, Processing, Done, error states, animation cancellation, and approximately 400 ms completion dismissal. |
-| Settings UI | General, Models, and About navigation; overlay visibility; completion sound defaults and persistence; model selection; download progress across tabs; model actions; Claude enablement; and Keychain API-key status. |
+| Settings UI | General, AI, Models, and About navigation; overlay visibility; completion sound defaults and persistence; model selection; download progress across tabs; model actions; Claude enablement; provider/model persistence; Claude model-list decoding; and Keychain API-key status. |
 | Claude routing | Prefix parsing, normal-dictation bypass, prompt forwarding, missing-key handling, request response handling, and coordinator routing. |
 | Menu-bar UI | State-dependent icon selection and native template rendering behavior. |
 
@@ -193,11 +193,11 @@ VoiceFlow expects the direct WhisperKit Hub repository layout below that root an
 
 Verify that the overlay remains a single compact rounded pill without an extra gray backing, dark shadow layer, clipping artifact, or misaligned border. Confirm the sequence **Listening → Processing → Done → idle** and that Done lasts briefly after successful injection.
 
-Switch macOS between Light and Dark Mode and confirm that the idle menu-bar identity icon remains visible through native template rendering. Recording and error states should retain their semantic colors. Open Settings repeatedly and switch among General, Models, and About to confirm the window size and navigation remain stable.
+Switch macOS between Light and Dark Mode and confirm that the idle menu-bar identity icon remains visible through native template rendering. Recording and error states should retain their semantic colors. Open Settings repeatedly and switch among General, AI, Models, and About to confirm the window size and navigation remain stable.
 
 In General, confirm that completion sound is off by default, can be enabled, persists after relaunch, and offers Tink, Pop, and Glass. Verify that a sound plays only after successful text injection and never after transcription or injection failure.
 
-To test Claude without exposing a real key in test output, open **Settings → General → Claude commands**, enable Claude commands, enter an Anthropic API key, save it, and confirm that the UI reports it as saved in Keychain without displaying it. Use a disposable TextEdit document, focus the field, hold Fn, and say a short request beginning with `Claude`, such as `Claude, rewrite this sentence politely`. Confirm that only Claude’s response is injected. Then dictate a sentence without the `Claude` prefix and confirm that it uses the local transcription path without a Claude request. Do not use private or sensitive speech in this test. Revoke or remove the key after testing if the Mac is shared.
+To test Claude without exposing a real key in test output, open **Settings → AI**, confirm Claude is the default provider, enable Claude commands, enter an Anthropic API key, and save it. Confirm that the UI reports it as saved in Keychain without displaying it. Press **Fetch available models** and verify that the model picker is populated from Anthropic; if the request fails, confirm the selected model remains usable and an actionable error is shown. Use a disposable TextEdit document, focus the field, hold Fn, and say a short request beginning with `Claude`, such as `Claude, rewrite this sentence politely`. Confirm that only Claude’s response is injected. Then dictate a sentence without the `Claude` prefix and confirm that it uses the local transcription path without a Claude request. ChatGPT should be visibly marked as coming soon and must not make an OpenAI request in this version. Do not use private or sensitive speech in this test. Revoke or remove the key after testing if the Mac is shared.
 
 ## Distribution-artifact testing
 

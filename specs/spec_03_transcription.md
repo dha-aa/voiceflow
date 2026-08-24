@@ -173,9 +173,9 @@ The engine error categories are:
 
 ## 6. Optional Claude command processing
 
-`ClaudeCommandProcessor` and `LiveClaudeAPIClient` are located in `voiceflow/Core/LLM/ClaudeClient.swift`. Claude processing is disabled by default and is invoked only when the normalized local transcript begins with the explicit command word `Claude`, case-insensitively, optionally followed by punctuation. The command prefix is removed before the request; normal dictated text never calls the network.
+`ClaudeCommandProcessor` and `LiveClaudeAPIClient` are located in `voiceflow/Core/LLM/ClaudeClient.swift`. Claude processing is disabled by default and is invoked only when Claude is the selected AI provider and the normalized local transcript begins with the explicit command word `Claude`, case-insensitively, optionally followed by punctuation. The command prefix is removed before the request; normal dictated text never calls the network.
 
-The Anthropic API key is stored in the macOS Keychain under the app bundle identifier and is never stored in `UserDefaults`, source files, logs, or audio/model files. The client sends a text-only Messages API request over HTTPS with `x-api-key`, `anthropic-version: 2023-06-01`, and `Content-Type: application/json`. It uses the configured model ID and a bounded `max_tokens` value, parses only text content blocks, rejects empty responses, and never logs the API key, prompt, response, audio, or injected text. The user explicitly opts into sending the remaining transcript text to Anthropic by enabling Claude commands.
+The Anthropic API key is stored in the macOS Keychain under the app bundle identifier and is never stored in `UserDefaults`, source files, logs, or audio/model files. The client sends a text-only Messages API request over HTTPS with `x-api-key`, `anthropic-version: 2023-06-01`, and `Content-Type: application/json`. It uses the selected per-provider Claude model ID and a bounded `max_tokens` value, parses only text content blocks, rejects empty responses, and never logs the API key, prompt, response, audio, or injected text. The user explicitly opts into sending the remaining transcript text to Anthropic by enabling Claude commands. Model discovery is a separate user-triggered AI Settings action using the authenticated Anthropic `GET /v1/models` endpoint.
 
 Claude configuration, missing-key, empty-response, and request failures map to dedicated shared application errors and return the pipeline to a recoverable error state. The response replaces the local transcript before the existing `.injecting` transition and injection callback.
 
@@ -218,6 +218,8 @@ The current executable tests include:
 
 | Test file | Current coverage |
 |---|---|
+| `voiceflowTests/LLM/ClaudeClientTests.swift` | Leading-command parsing, selected-provider routing, Keychain/request behavior, and final response handoff |
+| `voiceflowTests/UI/SettingsTests.swift` | AI destination, provider/model persistence, legacy migration, and Claude model-list decoding |
 | `voiceflowTests/Transcription/ModelManagerTests.swift` | Canonical and custom repository layouts, direct Hub path, custom-folder import, base model validation, required components, nested-directory rejection, invalid artifacts, selection and download behavior |
 | `voiceflowTests/Transcription/TranscriptionEngineTests.swift` | Selected-model requirement, incomplete-model rejection, session caching, exact-folder forwarding, prepare, background preload, replacement after selection, silent audio, runtime failures |
 | `voiceflowTests/Transcription/TranscriptionCoordinatorTests.swift` | Processing-state gate, artifact cleanup, processed callback text, success-to-injecting transition, missing-model mapping |
