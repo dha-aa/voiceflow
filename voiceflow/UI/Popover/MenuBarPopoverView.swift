@@ -11,6 +11,7 @@ struct MenuBarPopoverView: View {
     @Bindable var modelManager: ModelManager
     @Bindable var speechRecognitionSettings: SpeechRecognitionSettings
     @Bindable var parakeetModelManager: ParakeetModelManager
+    @Bindable var snippetStore: SnippetStore
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -37,7 +38,8 @@ struct MenuBarPopoverView: View {
                 SettingsWindowController.shared.show(
                     modelManager: modelManager,
                     speechRecognitionSettings: speechRecognitionSettings,
-                    parakeetModelManager: parakeetModelManager
+                    parakeetModelManager: parakeetModelManager,
+                    snippetStore: snippetStore
                 )
             } label: {
                 Label("Settings...", systemImage: "gearshape")

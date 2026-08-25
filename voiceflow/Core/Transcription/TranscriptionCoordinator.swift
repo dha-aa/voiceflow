@@ -12,6 +12,7 @@ final class TranscriptionCoordinator {
     private let engine: SpeechTranscriptionEngine
     private let processor: TextProcessor
     private let claudeProcessor: ClaudeCommandProcessor
+    private let snippetStore: SnippetStore
 
     var onTranscriptionComplete: ((String, NSRunningApplication?) -> Void)?
     var onAIProcessingStarted: ((AIProvider) -> Void)?
@@ -20,12 +21,14 @@ final class TranscriptionCoordinator {
         stateManager: AppStateManager,
         engine: SpeechTranscriptionEngine,
         processor: TextProcessor,
-        claudeProcessor: ClaudeCommandProcessor = ClaudeCommandProcessor()
+        claudeProcessor: ClaudeCommandProcessor = ClaudeCommandProcessor(),
+        snippetStore: SnippetStore = SnippetStore()
     ) {
         self.stateManager = stateManager
         self.engine = engine
         self.processor = processor
         self.claudeProcessor = claudeProcessor
+        self.snippetStore = snippetStore
         VoiceFlowLog.pipeline.debug("transcription_coordinator_initialized")
     }
 
@@ -56,11 +59,12 @@ final class TranscriptionCoordinator {
             if let provider = claudeProcessor.requestedProvider(for: processedText) {
                 onAIProcessingStarted?(provider)
             }
-            let finalText = try await claudeProcessor.processTranscribedText(
+            let aiProcessedText = try await claudeProcessor.processTranscribedText(
                 processedText,
                 targetApp: targetApp,
                 selectedText: selectedText
             ) ?? processedText
+            let finalText = snippetStore.expand(aiProcessedText)
             guard !finalText.isEmpty else {
                 VoiceFlowLog.pipeline.error("transcription_processing_failed audio_id=\(audioID, privacy: .public) reason=empty_final_text")
                 throw TranscriptionEngine.TranscriptionEngineError.noAudioDetected

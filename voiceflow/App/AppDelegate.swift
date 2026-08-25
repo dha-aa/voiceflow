@@ -24,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let modelManager = ModelManager()
         let speechRecognitionSettings = SpeechRecognitionSettings()
         let parakeetModelManager = ParakeetModelManager()
+        let snippetStore = SnippetStore()
         VoiceFlowLog.model.info(
             "application_identity bundle_identifier=\(Bundle.main.bundleIdentifier ?? "<missing>", privacy: .public) application_support_directory=\(modelManager.downloadBase.deletingLastPathComponent().path, privacy: .public) models_root_directory=\(modelManager.downloadBase.path, privacy: .public)"
         )
@@ -45,7 +46,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             stateManager: stateManager,
             modelManager: modelManager,
             speechRecognitionSettings: speechRecognitionSettings,
-            parakeetModelManager: parakeetModelManager
+            parakeetModelManager: parakeetModelManager,
+            snippetStore: snippetStore
         )
         let whisperKitEngine = TranscriptionEngine(modelManager: modelManager)
         let parakeetEngine = ParakeetTranscriptionEngine(modelManager: parakeetModelManager)
@@ -69,7 +71,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             stateManager: stateManager,
             engine: transcriptionEngine,
             processor: TextProcessor(),
-            claudeProcessor: ClaudeCommandProcessor(selectedTextReader: textInjector)
+            claudeProcessor: ClaudeCommandProcessor(selectedTextReader: textInjector),
+            snippetStore: snippetStore
         )
         let injectionCoordinator = InjectionCoordinator(
             stateManager: stateManager,

@@ -44,9 +44,14 @@ final class SettingsNavigationTests: XCTestCase {
     func test_settingsDestinations_includeAllPanes() {
         let destinations = SettingsView.Destination.allCases
 
-        XCTAssertEqual(destinations, [.general, .ai, .models, .about])
-        XCTAssertEqual(Set(destinations.map(\.title)), ["General", "AI", "Models", "About"])
-        XCTAssertEqual(Set(destinations.map(\.systemImage)).count, 4)
+        XCTAssertEqual(destinations, [.general, .ai, .models, .snippets, .about])
+        XCTAssertEqual(Set(destinations.map(\.title)), ["General", "AI", "Models", "Snippets", "About"])
+        XCTAssertEqual(Set(destinations.map(\.systemImage)).count, 5)
+    }
+
+    func test_snippetsSettingsView_canBeConstructed() {
+        _ = SnippetsSettingsView(store: SnippetStore())
+        XCTAssertTrue(true)
     }
 
     func test_settingsView_canBeConstructed() {
@@ -61,6 +66,35 @@ final class SettingsNavigationTests: XCTestCase {
             parakeetModelManager: ParakeetModelManager()
         )
         XCTAssertTrue(true)
+    }
+
+    func test_snippetStore_crudPersistsAcrossInstances() {
+        let suiteName = "snippet-settings-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = SnippetStore(userDefaults: defaults)
+        let id = store.add(
+            name: "My Email",
+            trigger: "my email",
+            value: "user@gmail.com"
+        )
+        XCTAssertEqual(store.snippets.count, 1)
+
+        store.update(
+            id: id,
+            name: "Personal Email",
+            trigger: "my personal email",
+            value: "me@example.com"
+        )
+        XCTAssertEqual(store.snippets.first?.trigger, "my personal email")
+
+        let restored = SnippetStore(userDefaults: defaults)
+        XCTAssertEqual(restored.snippets.first?.value, "me@example.com")
+
+        restored.delete(id: id)
+        XCTAssertTrue(restored.snippets.isEmpty)
+        XCTAssertTrue(SnippetStore(userDefaults: defaults).snippets.isEmpty)
     }
 }
 

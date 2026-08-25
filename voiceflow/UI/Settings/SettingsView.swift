@@ -10,6 +10,7 @@ struct SettingsView: View {
         case general
         case ai
         case models
+        case snippets
         case about
 
         var id: String { rawValue }
@@ -19,6 +20,7 @@ struct SettingsView: View {
             case .general: "General"
             case .ai: "AI"
             case .models: "Models"
+            case .snippets: "Snippets"
             case .about: "About"
             }
         }
@@ -28,6 +30,7 @@ struct SettingsView: View {
             case .general: "gearshape"
             case .ai: "sparkles"
             case .models: "cpu"
+            case .snippets: "text.badge.plus"
             case .about: "info.circle"
             }
         }
@@ -37,6 +40,7 @@ struct SettingsView: View {
     let downloadCoordinator: ModelDownloadCoordinator
     let speechRecognitionSettings: SpeechRecognitionSettings
     let parakeetModelManager: ParakeetModelManager
+    var snippetStore: SnippetStore = SnippetStore()
     @State private var selection: Destination = .general
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
@@ -106,7 +110,8 @@ struct SettingsView: View {
                 speechRecognitionSettings: speechRecognitionSettings,
                 parakeetModelManager: parakeetModelManager
             )
-
+        case .snippets:
+            SnippetsSettingsView(store: snippetStore)
         case .about:
             AboutSettingsView()
         }

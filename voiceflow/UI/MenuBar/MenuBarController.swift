@@ -14,6 +14,7 @@ final class MenuBarController {
     private let modelManager: ModelManager
     private let speechRecognitionSettings: SpeechRecognitionSettings
     private let parakeetModelManager: ParakeetModelManager
+    private let snippetStore: SnippetStore
     private var stateTimer: Timer?
     private var animationTimer: Timer?
     private var lastState: AppState?
@@ -23,12 +24,14 @@ final class MenuBarController {
         stateManager: AppStateManager,
         modelManager: ModelManager,
         speechRecognitionSettings: SpeechRecognitionSettings,
-        parakeetModelManager: ParakeetModelManager
+        parakeetModelManager: ParakeetModelManager,
+        snippetStore: SnippetStore = SnippetStore()
     ) {
         self.stateManager = stateManager
         self.modelManager = modelManager
         self.speechRecognitionSettings = speechRecognitionSettings
         self.parakeetModelManager = parakeetModelManager
+        self.snippetStore = snippetStore
         setupStatusItem()
         setupPopover()
         startStateObservation()
@@ -58,9 +61,11 @@ final class MenuBarController {
             rootView: MenuBarPopoverView(
                 stateManager: stateManager,
                 modelManager: modelManager,
-                speechRecognitionSettings: speechRecognitionSettings,
-                parakeetModelManager: parakeetModelManager
-            )
+                                    speechRecognitionSettings: speechRecognitionSettings,
+                    parakeetModelManager: parakeetModelManager,
+                    snippetStore: snippetStore
+                )
+
         )
     }
 

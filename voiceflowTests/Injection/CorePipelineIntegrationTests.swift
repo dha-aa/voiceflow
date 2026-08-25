@@ -31,13 +31,15 @@ final class CorePipelineIntegrationTests: XCTestCase {
         }
         modelManager.selectModel(id: "tiny.en")
 
+        let aiDefaults = UserDefaults(suiteName: "injection-pipeline-ai-\(UUID().uuidString)")!
         let transcriptionCoordinator = TranscriptionCoordinator(
             stateManager: stateManager,
             engine: TranscriptionEngine(
                 modelManager: modelManager,
                 sessionFactory: TestSessionFactory(result: .success(" hello pipeline test "))
             ),
-            processor: TextProcessor()
+            processor: TextProcessor(),
+            claudeProcessor: ClaudeCommandProcessor(userDefaults: aiDefaults)
         )
         let injector = TestTextInjector()
         let injectionCoordinator = InjectionCoordinator(

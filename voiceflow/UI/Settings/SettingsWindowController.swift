@@ -16,6 +16,7 @@ final class SettingsWindowController: NSWindowController {
     private var modelManager: ModelManager?
     private var speechRecognitionSettings: SpeechRecognitionSettings?
     private var parakeetModelManager: ParakeetModelManager?
+    private var snippetStore: SnippetStore?
     private var downloadCoordinator: ModelDownloadCoordinator?
 
     private init() {
@@ -29,11 +30,13 @@ final class SettingsWindowController: NSWindowController {
     func show(
         modelManager: ModelManager,
         speechRecognitionSettings: SpeechRecognitionSettings,
-        parakeetModelManager: ParakeetModelManager
+        parakeetModelManager: ParakeetModelManager,
+        snippetStore: SnippetStore = SnippetStore()
     ) {
         self.modelManager = modelManager
         self.speechRecognitionSettings = speechRecognitionSettings
         self.parakeetModelManager = parakeetModelManager
+        self.snippetStore = snippetStore
         if downloadCoordinator?.modelManager !== modelManager {
             downloadCoordinator = ModelDownloadCoordinator(modelManager: modelManager)
         }
@@ -45,7 +48,8 @@ final class SettingsWindowController: NSWindowController {
                     modelManager: modelManager,
                     downloadCoordinator: downloadCoordinator,
                     speechRecognitionSettings: speechRecognitionSettings,
-                    parakeetModelManager: parakeetModelManager
+                    parakeetModelManager: parakeetModelManager,
+                    snippetStore: snippetStore
                 )
             )
             resetWindowGeometry(window)
@@ -70,7 +74,8 @@ final class SettingsWindowController: NSWindowController {
                     modelManager: modelManager,
                     downloadCoordinator: downloadCoordinator,
                     speechRecognitionSettings: speechRecognitionSettings,
-                    parakeetModelManager: parakeetModelManager
+                    parakeetModelManager: parakeetModelManager,
+                    snippetStore: snippetStore
                 )
             )
             self.window = settingsWindow
@@ -83,11 +88,13 @@ final class SettingsWindowController: NSWindowController {
     func show() {
         guard let modelManager,
               let speechRecognitionSettings,
-              let parakeetModelManager else { return }
+              let parakeetModelManager,
+              let snippetStore else { return }
         show(
             modelManager: modelManager,
             speechRecognitionSettings: speechRecognitionSettings,
-            parakeetModelManager: parakeetModelManager
+            parakeetModelManager: parakeetModelManager,
+            snippetStore: snippetStore
         )
     }
 
