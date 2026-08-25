@@ -120,7 +120,7 @@ final class SnippetStore {
         userDefaults.set(data, forKey: Self.storageKey)
     }
 
-    private static func isUsable(_ snippet: Snippet) -> Bool {
+    private nonisolated static func isUsable(_ snippet: Snippet) -> Bool {
         !snippet.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
             !snippet.trigger.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
             !snippet.value.isEmpty

@@ -40,8 +40,9 @@ struct SettingsView: View {
     let downloadCoordinator: ModelDownloadCoordinator
     let speechRecognitionSettings: SpeechRecognitionSettings
     let parakeetModelManager: ParakeetModelManager
-    var snippetStore: SnippetStore = SnippetStore()
-    var audioRetentionManager: AudioRetentionManager = AudioRetentionManager()
+    let snippetStore: SnippetStore
+    let audioRetentionManager: AudioRetentionManager
+    let aiSettingsService: AISettingsService
     @State private var selection: Destination = .general
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
@@ -103,7 +104,7 @@ struct SettingsView: View {
         case .general:
             GeneralSettingsView(audioRetentionManager: audioRetentionManager)
         case .ai:
-            AISettingsView()
+            AISettingsView(settingsService: aiSettingsService)
         case .models:
             ModelsSettingsView(
                 modelManager: modelManager,

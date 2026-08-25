@@ -50,7 +50,7 @@ enum ParakeetModelVariant: String, CaseIterable, Identifiable, Hashable, Sendabl
     }
 
     /// FluidAudio strips `-coreml` from these repository names for its cache.
-    var cacheDirectoryName: String {
+    nonisolated var cacheDirectoryName: String {
         switch self {
         case .v3: "parakeet-tdt-0.6b-v3"
         case .v2: "parakeet-tdt-0.6b-v2"
@@ -127,7 +127,7 @@ typealias ParakeetDownloadOperation = @Sendable (
 @MainActor
 @Observable
 final class ParakeetModelManager: ParakeetModelProviding {
-    static let modelBaseDirectory: URL = ModelManager.appModelsDirectory
+    nonisolated static let modelBaseDirectory: URL = ModelManager.appModelsDirectory
         .appendingPathComponent("fluidaudio", isDirectory: true)
     static let availableVariants = ParakeetModelVariant.allCases
 
@@ -410,7 +410,7 @@ final class ParakeetModelManager: ParakeetModelProviding {
         )
     }
 
-    static func modelDirectory(
+    nonisolated static func modelDirectory(
         for variant: ParakeetModelVariant,
         baseDirectory: URL = modelBaseDirectory
     ) -> URL {

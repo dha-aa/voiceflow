@@ -31,7 +31,6 @@ final class InjectionCoordinator {
     func inject(text: String, targetApp: NSRunningApplication?) async {
         guard stateManager.currentState == .injecting else {
             VoiceFlowLog.pipeline.error("text_injection_ignored reason=state_not_injecting current_state=\(String(describing: self.stateManager.currentState), privacy: .public)")
-            print("Ignoring injection request outside injecting state")
             return
         }
 
@@ -65,10 +64,8 @@ final class InjectionCoordinator {
             guard stateManager.currentState == .completed || stateManager.currentState == .copiedToClipboard else { return }
             stateManager.transition(to: .idle)
             VoiceFlowLog.pipeline.info("pipeline_returned_to_idle reason=completed")
-            print("State → idle")
         } catch let error as TextInjector.TextInjectionError {
             VoiceFlowLog.pipeline.error("text_output_failed target_application_present=\(targetApp != nil, privacy: .public) category=\(error.category, privacy: .public)")
-            print("Text injection failed: \(error.localizedDescription)")
             if case .accessibilityPermissionDenied = error {
                 stateManager.transition(to: .error(.accessibilityPermissionDenied))
             } else {
@@ -76,7 +73,6 @@ final class InjectionCoordinator {
             }
         } catch {
             VoiceFlowLog.pipeline.error("text_injection_failed target_application_present=\(targetApp != nil, privacy: .public) category=runtime error=\(String(describing: error), privacy: .public)")
-            print("Text injection failed: \(error.localizedDescription)")
             stateManager.transition(to: .error(.injectionFailed))
         }
     }

@@ -8,6 +8,12 @@
 import SwiftUI
 
 struct AISettingsView: View {
+    let settingsService: AISettingsService
+
+    init(settingsService: AISettingsService) {
+        self.settingsService = settingsService
+    }
+
     @AppStorage(AISettings.selectedProviderKey) private var selectedProviderRawValue = AIProvider.claude.rawValue
     @AppStorage(AISettings.commandsEnabledKey) private var claudeCommandsEnabled = false
     @AppStorage(AISettings.alwaysUseAIKey) private var alwaysUseAI = false
@@ -193,7 +199,7 @@ struct AISettingsView: View {
 
     private func loadClaudeKeyStatus() {
         do {
-            hasClaudeAPIKey = try KeychainAPIKeyStore(provider: .claude).read() != nil
+            hasClaudeAPIKey = try settingsService.hasClaudeAPIKey()
             isEditingClaudeAPIKey = !hasClaudeAPIKey
         } catch {
             setStatus("Could not read the Claude API key from Keychain.", isError: true)
@@ -204,7 +210,7 @@ struct AISettingsView: View {
         let trimmedKey = claudeAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedKey.isEmpty else { return }
         do {
-            try KeychainAPIKeyStore(provider: .claude).save(trimmedKey)
+            try settingsService.saveClaudeAPIKey(trimmedKey)
             claudeAPIKey = ""
             hasClaudeAPIKey = true
             isEditingClaudeAPIKey = false
@@ -216,7 +222,7 @@ struct AISettingsView: View {
 
     private func removeClaudeAPIKey() {
         do {
-            try KeychainAPIKeyStore(provider: .claude).remove()
+            try settingsService.removeClaudeAPIKey()
             claudeAPIKey = ""
             hasClaudeAPIKey = false
             isEditingClaudeAPIKey = true
@@ -228,23 +234,10 @@ struct AISettingsView: View {
     }
 
     private func refreshClaudeModels() async {
-        let apiKey: String?
-        do {
-            apiKey = try KeychainAPIKeyStore(provider: .claude).read()
-        } catch {
-            setStatus("Could not read the Claude API key from Keychain.", isError: true)
-            return
-        }
-        guard let apiKey,
-              !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            setStatus("Save a Claude API key before fetching models.", isError: true)
-            return
-        }
-
         isRefreshingModels = true
         defer { isRefreshingModels = false }
         do {
-            let models = try await LiveClaudeModelCatalogClient().fetchModels(apiKey: apiKey)
+            let models = try await settingsService.fetchClaudeModels()
             availableClaudeModels = models
             if !models.contains(where: { $0.id == claudeModel }),
                let firstModel = models.first {
@@ -257,13 +250,9 @@ struct AISettingsView: View {
     }
 
     private func migrateLegacyClaudeModelIfNeeded() {
-        let defaults = UserDefaults.standard
-        guard defaults.string(forKey: AISettings.modelKey(for: .claude)) == nil,
-              let legacyModel = defaults.string(forKey: AISettings.legacyClaudeModelKey),
-              !legacyModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return
+        if let legacyModel = settingsService.migrateLegacyClaudeModelIfNeeded() {
+            claudeModel = legacyModel
         }
-        claudeModel = legacyModel
     }
 
     private func setStatus(_ message: String, isError: Bool) {

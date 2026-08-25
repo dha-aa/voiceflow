@@ -125,9 +125,11 @@ Parakeet downloads use FluidAudio’s cache folder names under `~/Library/Applic
 | `voiceflow/UI/Onboarding/` | First-launch welcome, sequential permissions, skip/denial handling, and setup completion. |
 | `voiceflow/UI/Settings/` | General, AI, Models, Snippets, About, download coordination, and Settings window behavior. |
 | `voiceflowTests/` | Unit, integration, model lifecycle, injection, overlay, and settings regression tests. |
-| `spec_changes/` | Sequential implementation change records, including the local Snippets and audio-storage changes. |
+| `specs/` | Current implementation and verification specifications. |
+| `spec_changes/` | Sequential historical implementation change records; not a replacement for current specifications. |
 | `scripts/release.sh` | Shared local release script for signed or unsigned DMGs. |
 | `.github/workflows/release.yml` | Tag-triggered and manually triggered CI distribution workflow. |
+| `docs/architecture.md` | Concise architecture map, ownership rules, data flow, and dependency direction for humans and AI agents. |
 | `docs/testing.md` | Automated and manual verification procedures. |
 | `docs/release.md` | Release modes, artifact handling, credentials, and Gatekeeper guidance. |
 

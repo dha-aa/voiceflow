@@ -4,7 +4,7 @@ Thank you for contributing to VoiceFlow. VoiceFlow is a native macOS push-to-tal
 
 ## Before you begin
 
-Read [`README.md`](README.md) for the project overview, [`docs/testing.md`](docs/testing.md) for verification procedures, and [`docs/release.md`](docs/release.md) for distribution behavior. Review the relevant specification in [`specs/`](specs/) before changing an area of the product.
+Read [`README.md`](README.md) for the project overview, [`docs/architecture.md`](docs/architecture.md) for module ownership and dependency direction, [`docs/testing.md`](docs/testing.md) for verification procedures, and [`docs/release.md`](docs/release.md) for distribution behavior. Review the relevant current specification in [`specs/`](specs/) before changing an area of the product. The [`spec_changes/`](spec_changes/) directory is historical implementation-change context, not the current source of truth.
 
 Development requires a Mac running macOS 14 or later with the full Xcode installation. The project is an Xcode project using Swift Package Manager. Command Line Tools alone are not enough to build the app or run its macOS test target.
 
@@ -38,7 +38,7 @@ git checkout -b fix/short-description
 
 Keep each commit focused on one coherent change. Use an imperative subject line that explains the outcome, such as `Fix model readiness gating before recording`. Include a body when the reason for the change, privacy impact, migration behavior, or verification limits are not obvious from the subject.
 
-Do not commit generated artifacts or local machine state. The repository ignores common Xcode outputs and release artifacts, but always inspect `git status` before committing. In particular, do not commit DMGs, model files, audio files, certificates, private keys, provisioning profiles, `.xcuserstate` files, or Apple credentials.
+Do not commit generated artifacts or local machine state. The repository ignores common Xcode outputs and release artifacts, but always inspect `git status` before committing. In particular, do not commit DMGs, model files, audio files, certificates, private keys, provisioning profiles, `.xcuserstate` files, or Apple credentials. Root-level `ManualFnProbe.swift` and `WhisperProbe.swift` are local debugging probes, not supported production tools; keep them untracked and do not stage them. If a probe becomes a supported tool, move it under a documented `tools/probes/` directory in a separate focused change.
 
 ## Architecture guidelines
 
@@ -90,7 +90,7 @@ xcodebuild \
   CODE_SIGNING_ALLOWED=NO
 ```
 
-The expected baseline is **102 tests with zero failures**, subject to intentional changes that are explained in the pull request. Run focused tests while iterating, but run the full suite before requesting review. See [`docs/testing.md`](docs/testing.md) for test groups and manual TextEdit verification.
+The expected baseline is **186 tests with zero failures**, subject to intentional changes that are explained in the pull request. Run focused tests while iterating, but run the full suite before requesting review. See [`docs/testing.md`](docs/testing.md) for test groups and manual TextEdit verification.
 
 ### CI quality gate
 

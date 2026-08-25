@@ -10,173 +10,6 @@ import Observation
 import OSLog
 import WhisperKit
 
-struct WhisperModelDefinition: Identifiable, Equatable {
-    let id: String
-    let displayName: String
-    let repository: String
-    let remoteModelID: String
-    let folderName: String
-    let language: String?
-    let isRecommended: Bool
-}
-
-struct WhisperModel: Identifiable, Equatable {
-    let id: String
-    let displayName: String
-    let sizeOnDisk: Int64?
-    let isDownloaded: Bool
-    let isRecommended: Bool
-    var isActive: Bool
-
-    init(
-        id: String,
-        displayName: String? = nil,
-        sizeOnDisk: Int64?,
-        isDownloaded: Bool,
-        isRecommended: Bool,
-        isActive: Bool
-    ) {
-        self.id = id
-        self.displayName = displayName ?? Self.makeDisplayName(from: id)
-        self.sizeOnDisk = sizeOnDisk
-        self.isDownloaded = isDownloaded
-        self.isRecommended = isRecommended
-        self.isActive = isActive
-    }
-
-    private static func makeDisplayName(from id: String) -> String {
-        id.replacingOccurrences(of: "-", with: " ")
-            .replacingOccurrences(of: "_", with: " ")
-            .split(whereSeparator: { $0 == " " })
-            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
-            .joined(separator: " ")
-    }
-}
-
-protocol WhisperKitModelLoadValidator: AnyObject {
-    func validateModelLoad(modelID: String, modelFolder: URL, downloadBase: URL) async throws
-}
-
-protocol WhisperKitModelCatalog {
-    func fetchAvailableModels(from repository: String, matching: [String], downloadBase: URL) async throws -> [String]
-    func recommendedRemoteModels(from repository: String, downloadBase: URL) async -> ModelSupport
-    func download(
-        variant: String,
-        from repository: String,
-        downloadBase: URL,
-        progressCallback: @escaping @Sendable (Progress) -> Void
-    ) async throws -> URL
-}
-
-private struct LiveWhisperKitModelCatalog: WhisperKitModelCatalog {
-    func fetchAvailableModels(from repository: String, matching: [String], downloadBase: URL) async throws -> [String] {
-        try await WhisperKit.fetchAvailableModels(
-            from: repository,
-            matching: matching,
-            downloadBase: downloadBase
-        )
-    }
-
-    func recommendedRemoteModels(from repository: String, downloadBase: URL) async -> ModelSupport {
-        await WhisperKit.recommendedRemoteModels(
-            from: repository,
-            downloadBase: downloadBase
-        )
-    }
-
-    func download(
-        variant: String,
-        from repository: String,
-        downloadBase: URL,
-        progressCallback: @escaping @Sendable (Progress) -> Void
-    ) async throws -> URL {
-        try await WhisperKit.download(
-            variant: variant,
-            downloadBase: downloadBase,
-            from: repository,
-            progressCallback: progressCallback
-        )
-    }
-}
-
-struct WhisperKitComponentDiagnostic: Equatable {
-    let name: String
-    let compiledModelURL: URL
-    let packageURL: URL
-    let compiledModelExists: Bool
-    let packageExists: Bool
-
-    var exists: Bool {
-        compiledModelExists || packageExists
-    }
-}
-
-struct ModelPreflightReport: Equatable {
-    let modelID: String
-    let bundleIdentifier: String
-    let applicationSupportDirectory: URL
-    let modelsRootDirectory: URL
-    let resolvedModelDirectory: URL?
-    let modelDirectoryExists: Bool
-    let modelDirectoryIsReadable: Bool
-    let modelDirectoryIsInsideModelsRoot: Bool
-    let modelDirectoryHasNoSymlink: Bool
-    let modelIDMatchesDirectory: Bool
-    let expectedModelComponentsPresent: Bool
-    let componentDiagnostics: [WhisperKitComponentDiagnostic]
-    let nestedModelDirectory: URL?
-    let whisperKitModelFolder: URL?
-    let whisperKitConfigurationResolved: Bool
-
-    var isValid: Bool {
-        modelDirectoryExists &&
-            modelDirectoryIsReadable &&
-            modelDirectoryIsInsideModelsRoot &&
-            modelDirectoryHasNoSymlink &&
-            modelIDMatchesDirectory &&
-            expectedModelComponentsPresent &&
-            whisperKitConfigurationResolved
-    }
-
-    var validationFailureReason: String {
-        if !modelDirectoryExists { return "model_directory_missing" }
-        if !modelDirectoryIsReadable { return "model_directory_not_readable" }
-        if !modelDirectoryIsInsideModelsRoot { return "model_directory_outside_models_root" }
-        if !modelDirectoryHasNoSymlink { return "model_directory_symlink" }
-        if !modelIDMatchesDirectory { return "model_directory_id_mismatch" }
-        if nestedModelDirectory != nil { return "nested_model_directory" }
-        if !expectedModelComponentsPresent { return "required_coreml_component_missing" }
-        if !whisperKitConfigurationResolved { return "whisperkit_configuration_not_resolved" }
-        return "none"
-    }
-
-    var diagnosticDescription: String {
-        """
-        VoiceFlow Model Preflight
-        Bundle ID: \(bundleIdentifier)
-        Application Support: \(applicationSupportDirectory.path)
-        Models Root: \(modelsRootDirectory.path)
-        Selected Model: \(modelID)
-        Model Directory: \(resolvedModelDirectory?.path ?? "<none>")
-        Exists: \(modelDirectoryExists ? "PASS" : "FAIL")
-        Readable: \(modelDirectoryIsReadable ? "PASS" : "FAIL")
-        Inside Models Root: \(modelDirectoryIsInsideModelsRoot ? "PASS" : "FAIL")
-        No Symlink: \(modelDirectoryHasNoSymlink ? "PASS" : "FAIL")
-        Model ID: \(modelIDMatchesDirectory ? "PASS" : "FAIL")
-        Expected Files: \(expectedModelComponentsPresent ? "PASS" : "FAIL")
-        Nested Model Directory: \(nestedModelDirectory?.path ?? "<none>")
-        WhisperKit Folder: \(whisperKitModelFolder?.path ?? "<none>")
-        WhisperKit Configuration: \(whisperKitConfigurationResolved ? "PASS" : "FAIL")
-        Validation Failure Reason: \(validationFailureReason)
-
-        Component Diagnostics:
-        \(componentDiagnostics.map { "\($0.name): compiled=\($0.compiledModelExists ? "PASS" : "FAIL"), package=\($0.packageExists ? "PASS" : "FAIL")" }.joined(separator: "\n"))
-
-        RESULT: \(isValid ? "PASS" : "FAIL")
-        """
-    }
-}
-
 @Observable
 final class ModelManager {
     static let repository = "argmaxinc/whisperkit-coreml"
@@ -185,22 +18,10 @@ final class ModelManager {
     private static let repositoryNamespace = "argmaxinc"
     private static let repositoryName = "whisperkit-coreml"
     private static let modelDirectoryPrefix = "openai_whisper-"
-    private static let customModelDefinitions: [WhisperModelDefinition] = [
-        WhisperModelDefinition(
-            id: "hinglish",
-            displayName: "Hindi/Hinglish",
-            repository: "nitinh/whisperkit-hinglish-coreml",
-            remoteModelID: "Oriserve_Whisper-Hindi2Hinglish-Prime_889MB",
-            folderName: "Oriserve_Whisper-Hindi2Hinglish-Prime_889MB",
-            language: "en",
-            isRecommended: false
-        )
-    ]
-
     /// The one application-owned directory used as WhisperKit's download base.
     /// In a sandboxed build, Foundation resolves this Application Support URL
     /// inside the app container.
-    static var appModelsDirectory: URL {
+    nonisolated static var appModelsDirectory: URL {
         guard let applicationSupport = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
@@ -248,7 +69,7 @@ final class ModelManager {
     /// Returns the model identity expected by WhisperKit for a VoiceFlow model ID.
     func whisperKitModelID(for id: String) -> String {
         let normalizedID = Self.variantID(from: id)
-        return Self.customModelDefinitions.first {
+        return WhisperModelDefinition.customModels.first {
             $0.id == normalizedID ||
                 $0.remoteModelID == normalizedID ||
                 $0.folderName == normalizedID
@@ -307,7 +128,7 @@ final class ModelManager {
                 )
             }
 
-        for definition in Self.customModelDefinitions {
+        for definition in WhisperModelDefinition.customModels {
             let report = preflight(modelID: definition.id)
             guard report.isValid else { continue }
             if let directory = report.resolvedModelDirectory {
@@ -428,7 +249,7 @@ final class ModelManager {
     /// The source is copied into the repository-aware managed directory only
     /// after structural and real WhisperKit load validation succeed.
     func importCustomModel(from sourceDirectory: URL) async throws {
-        guard let definition = Self.customModelDefinitions.first else {
+        guard let definition = WhisperModelDefinition.customModels.first else {
             throw ModelManagerError.invalidModelIdentifier
         }
         let source = sourceDirectory.standardizedFileURL
@@ -551,7 +372,7 @@ final class ModelManager {
             let existing = availableModels[index]
             availableModels[index] = WhisperModel(
                 id: variantID,
-                displayName: Self.customModelDefinitions.first(where: { $0.id == variantID })?.displayName,
+                displayName: WhisperModelDefinition.customModels.first(where: { $0.id == variantID })?.displayName,
                 sizeOnDisk: report.resolvedModelDirectory.flatMap(directorySize),
                 isDownloaded: true,
                 isRecommended: existing.isRecommended,
@@ -561,7 +382,7 @@ final class ModelManager {
             availableModels.append(
                 WhisperModel(
                     id: variantID,
-                    displayName: Self.customModelDefinitions.first(where: { $0.id == variantID })?.displayName,
+                    displayName: WhisperModelDefinition.customModels.first(where: { $0.id == variantID })?.displayName,
                     sizeOnDisk: report.resolvedModelDirectory.flatMap(directorySize),
                     isDownloaded: true,
                     isRecommended: false,
@@ -602,7 +423,7 @@ final class ModelManager {
     }
 
     private func repositoryDirectory(for modelID: String) -> URL {
-        if let definition = Self.customModelDefinitions.first(where: {
+        if let definition = WhisperModelDefinition.customModels.first(where: {
             $0.id == modelID || $0.remoteModelID == modelID || $0.folderName == modelID
         }) {
             let parts = definition.repository.split(separator: "/")
@@ -621,7 +442,7 @@ final class ModelManager {
     }
 
     private func expectedFolderName(for modelID: String) -> String {
-        if let definition = Self.customModelDefinitions.first(where: {
+        if let definition = WhisperModelDefinition.customModels.first(where: {
             $0.id == modelID || $0.remoteModelID == modelID || $0.folderName == modelID
         }) {
             return definition.folderName

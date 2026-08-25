@@ -7,6 +7,7 @@
 
 import Foundation
 import Observation
+import OSLog
 
 @Observable
 final class AppStateManager {
@@ -17,8 +18,9 @@ final class AppStateManager {
         // Cancel any pending recovery task when state changes
         recoveryTask?.cancel()
         
-        // Log the transition
-        print("State transition: \(String(describing: currentState)) -> \(String(describing: newState))")
+        VoiceFlowLog.pipeline.debug(
+            "state_transition from=\(String(describing: self.currentState), privacy: .public) to=\(String(describing: newState), privacy: .public)"
+        )
         
         // Update currentState
         currentState = newState

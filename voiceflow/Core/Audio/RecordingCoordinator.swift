@@ -90,7 +90,6 @@ final class RecordingCoordinator {
         // The key monitor emits one down event per sustained hold. The extra
         // guard keeps this class safe if a monitor emits a duplicate event.
         guard !isFnHeld, stateManager.currentState == .idle else {
-            print("Ignoring Fn key down - recording pipeline is already active")
             return
         }
 
@@ -115,7 +114,7 @@ final class RecordingCoordinator {
             }
 
             guard permissionGranted else {
-                print("Microphone permission denied")
+                VoiceFlowLog.audio.error("recording_start_failed reason=microphone_permission_denied")
                 stateManager.transition(to: .error(.microphoneUnavailable))
                 targetApplication = nil
                 return
@@ -158,9 +157,8 @@ final class RecordingCoordinator {
                 }
                 stateManager.transition(to: .recording)
                 VoiceFlowLog.pipeline.info("recording_ready_started")
-                print("State → recording")
             } catch {
-                print("Failed to start recording: \(error.localizedDescription)")
+                VoiceFlowLog.audio.error("recording_start_failed reason=audio_recorder_error error=\(String(describing: error), privacy: .public)")
                 stateManager.transition(to: .error(.microphoneUnavailable))
                 targetApplication = nil
             }
@@ -181,7 +179,7 @@ final class RecordingCoordinator {
         }
 
         guard let audioURL = recorder.stopRecording() else {
-            print("Failed to stop recording - no audio was captured")
+            VoiceFlowLog.audio.error("recording_stop_failed reason=no_audio_captured")
             targetApplication = nil
             stateManager.transition(to: .error(.noAudioDetected))
             return
@@ -189,8 +187,6 @@ final class RecordingCoordinator {
 
         stateManager.transition(to: .processing)
         VoiceFlowLog.pipeline.info("recording_stage_completed audio_id=\(VoiceFlowLog.audioIdentifier(for: audioURL), privacy: .public)")
-        print("State → processing")
-        print("Recording complete: \(audioURL.path)")
         let capturedTargetApplication = targetApplication
         let capturedSelectedText = selectedTextAtStart
         onRecordingCompleteWithContext?(audioURL, capturedTargetApplication, capturedSelectedText)
