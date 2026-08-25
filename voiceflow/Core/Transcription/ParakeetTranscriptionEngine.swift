@@ -57,6 +57,7 @@ final class ParakeetTranscriptionEngine: SpeechTranscriptionEngine {
     private var cachedSession: ParakeetSession?
     private var cachedVariant: ParakeetModelVariant?
     private var inFlightLoadTask: Task<ParakeetSession, Error>?
+    private var inFlightVariant: ParakeetModelVariant?
     private var preloadTask: Task<Void, Never>?
 
     init(modelManager: ParakeetModelManager) {
@@ -85,22 +86,46 @@ final class ParakeetTranscriptionEngine: SpeechTranscriptionEngine {
     }
 
     func preloadSelectedModel() {
-        preloadTask?.cancel()
-        preloadTask = nil
-        inFlightLoadTask?.cancel()
-        inFlightLoadTask = nil
-        cachedSession = nil
-        cachedVariant = nil
-
+        let selectedVariant = modelManager.selectedVariant
         guard modelManager.isInstalled else {
+            preloadTask?.cancel()
+            preloadTask = nil
+            inFlightLoadTask?.cancel()
+            inFlightLoadTask = nil
+            inFlightVariant = nil
+            cachedSession = nil
+            cachedVariant = nil
+
             VoiceFlowLog.transcription.debug(
                 "parakeet_model_preload_skipped reason=model_not_installed variant=\(self.modelManager.selectedVariant.rawValue, privacy: .public)"
             )
             return
         }
 
+        if cachedSession != nil, cachedVariant == selectedVariant {
+            VoiceFlowLog.transcription.info(
+                "parakeet_model_preload_skipped variant=\(selectedVariant.rawValue, privacy: .public) reason=session_already_ready"
+            )
+            return
+        }
+
+        if inFlightLoadTask != nil, inFlightVariant == selectedVariant {
+            VoiceFlowLog.transcription.info(
+                "parakeet_model_preload_skipped variant=\(selectedVariant.rawValue, privacy: .public) reason=load_already_in_flight"
+            )
+            return
+        }
+
+        preloadTask?.cancel()
+        preloadTask = nil
+        inFlightLoadTask?.cancel()
+        inFlightLoadTask = nil
+        inFlightVariant = nil
+        cachedSession = nil
+        cachedVariant = nil
+
         VoiceFlowLog.transcription.info(
-            "parakeet_model_preload_requested variant=\(self.modelManager.selectedVariant.rawValue, privacy: .public)"
+            "parakeet_model_preload_requested variant=\(selectedVariant.rawValue, privacy: .public)"
         )
         preloadTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -169,13 +194,18 @@ final class ParakeetTranscriptionEngine: SpeechTranscriptionEngine {
             return cachedSession
         }
         if let inFlightLoadTask {
-            do {
-                return try await inFlightLoadTask.value
-            } catch let error as SpeechTranscriptionError {
-                throw error
-            } catch {
-                throw SpeechTranscriptionError.modelFailedToLoad(underlying: error)
+            if inFlightVariant == variant {
+                do {
+                    return try await inFlightLoadTask.value
+                } catch let error as SpeechTranscriptionError {
+                    throw error
+                } catch {
+                    throw SpeechTranscriptionError.modelFailedToLoad(underlying: error)
+                }
             }
+            inFlightLoadTask.cancel()
+            self.inFlightLoadTask = nil
+            inFlightVariant = nil
         }
 
         let modelDirectory = modelManager.modelDirectory
@@ -186,6 +216,7 @@ final class ParakeetTranscriptionEngine: SpeechTranscriptionEngine {
             try await sessionFactory.makeSession(modelFolder: modelDirectory, variant: variant)
         }
         inFlightLoadTask = loadTask
+        inFlightVariant = variant
         do {
             let newSession = try await loadTask.value
             if modelManager.isInstalled, modelManager.selectedVariant == variant {
@@ -193,15 +224,18 @@ final class ParakeetTranscriptionEngine: SpeechTranscriptionEngine {
                 cachedVariant = variant
             }
             inFlightLoadTask = nil
+            inFlightVariant = nil
             VoiceFlowLog.transcription.info(
                 "parakeet_model_load_succeeded variant=\(variant.rawValue, privacy: .public)"
             )
             return newSession
         } catch is CancellationError {
             inFlightLoadTask = nil
+            inFlightVariant = nil
             throw CancellationError()
         } catch {
             inFlightLoadTask = nil
+            inFlightVariant = nil
             VoiceFlowLog.transcription.error(
                 "parakeet_model_load_failed variant=\(variant.rawValue, privacy: .public) error=\(String(describing: error), privacy: .public)"
             )
