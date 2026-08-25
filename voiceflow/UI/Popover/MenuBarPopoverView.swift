@@ -14,6 +14,8 @@ struct MenuBarPopoverView: View {
     @Bindable var snippetStore: SnippetStore
     let audioRetentionManager: AudioRetentionManager
     let aiSettingsService: AISettingsService
+    let permissionManager: VoiceFlowPermissionManaging
+    let downloadCoordinator: ModelDownloadCoordinator
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -43,7 +45,9 @@ struct MenuBarPopoverView: View {
                     parakeetModelManager: parakeetModelManager,
                     snippetStore: snippetStore,
                     audioRetentionManager: audioRetentionManager,
-                    aiSettingsService: aiSettingsService
+                    aiSettingsService: aiSettingsService,
+                    permissionManager: permissionManager,
+                    downloadCoordinator: downloadCoordinator
                 )
             } label: {
                 Label("Settings...", systemImage: "gearshape")

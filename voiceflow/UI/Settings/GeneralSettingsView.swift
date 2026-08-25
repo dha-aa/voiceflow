@@ -46,11 +46,11 @@ struct GeneralSettingsView: View {
     private let audioRetentionManager: AudioRetentionManager
 
     init(
-        permissionManager: VoiceFlowPermissionManaging? = nil,
-        audioRetentionManager: AudioRetentionManager? = nil
+        permissionManager: VoiceFlowPermissionManaging,
+        audioRetentionManager: AudioRetentionManager
     ) {
-        self.permissionManager = permissionManager ?? SystemVoiceFlowPermissionManager()
-        self.audioRetentionManager = audioRetentionManager ?? AudioRetentionManager()
+        self.permissionManager = permissionManager
+        self.audioRetentionManager = audioRetentionManager
     }
 
     var body: some View {

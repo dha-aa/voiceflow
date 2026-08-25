@@ -17,6 +17,8 @@ final class MenuBarController {
     private let snippetStore: SnippetStore
     private let audioRetentionManager: AudioRetentionManager
     private let aiSettingsService: AISettingsService
+    private let permissionManager: VoiceFlowPermissionManaging
+    private let downloadCoordinator: ModelDownloadCoordinator
     private var stateTimer: Timer?
     private var animationTimer: Timer?
     private var lastState: AppState?
@@ -29,7 +31,9 @@ final class MenuBarController {
         parakeetModelManager: ParakeetModelManager,
         snippetStore: SnippetStore,
         audioRetentionManager: AudioRetentionManager,
-        aiSettingsService: AISettingsService
+        aiSettingsService: AISettingsService,
+        permissionManager: VoiceFlowPermissionManaging,
+        downloadCoordinator: ModelDownloadCoordinator
     ) {
         self.stateManager = stateManager
         self.modelManager = modelManager
@@ -38,6 +42,8 @@ final class MenuBarController {
         self.snippetStore = snippetStore
         self.audioRetentionManager = audioRetentionManager
         self.aiSettingsService = aiSettingsService
+        self.permissionManager = permissionManager
+        self.downloadCoordinator = downloadCoordinator
         setupStatusItem()
         setupPopover()
         startStateObservation()
@@ -71,7 +77,9 @@ final class MenuBarController {
                     parakeetModelManager: parakeetModelManager,
                     snippetStore: snippetStore,
                     audioRetentionManager: audioRetentionManager,
-                    aiSettingsService: aiSettingsService
+                    aiSettingsService: aiSettingsService,
+                    permissionManager: permissionManager,
+                    downloadCoordinator: downloadCoordinator
                 )
 
         )

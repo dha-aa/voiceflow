@@ -65,7 +65,8 @@ final class SettingsNavigationTests: XCTestCase {
             parakeetModelManager: ParakeetModelManager(),
             snippetStore: SnippetStore(),
             audioRetentionManager: AudioRetentionManager(),
-            aiSettingsService: AISettingsService()
+            aiSettingsService: AISettingsService(),
+            permissionManager: SystemVoiceFlowPermissionManager()
         )
         XCTAssertTrue(true)
     }
@@ -228,7 +229,10 @@ final class GeneralSettingsTests: XCTestCase {
     }
 
     func test_generalSettingsView_canBeConstructed() {
-        _ = GeneralSettingsView()
+        _ = GeneralSettingsView(
+            permissionManager: SystemVoiceFlowPermissionManager(),
+            audioRetentionManager: AudioRetentionManager()
+        )
         XCTAssertTrue(true)
     }
 

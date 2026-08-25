@@ -19,6 +19,7 @@ final class SettingsWindowController: NSWindowController {
     private var snippetStore: SnippetStore?
     private var audioRetentionManager: AudioRetentionManager?
     private var aiSettingsService: AISettingsService?
+    private var permissionManager: VoiceFlowPermissionManaging?
     private var downloadCoordinator: ModelDownloadCoordinator?
 
     private init() {
@@ -35,7 +36,9 @@ final class SettingsWindowController: NSWindowController {
         parakeetModelManager: ParakeetModelManager,
         snippetStore: SnippetStore,
         audioRetentionManager: AudioRetentionManager,
-        aiSettingsService: AISettingsService
+        aiSettingsService: AISettingsService,
+        permissionManager: VoiceFlowPermissionManaging,
+        downloadCoordinator: ModelDownloadCoordinator
     ) {
         self.modelManager = modelManager
         self.speechRecognitionSettings = speechRecognitionSettings
@@ -43,10 +46,8 @@ final class SettingsWindowController: NSWindowController {
         self.snippetStore = snippetStore
         self.audioRetentionManager = audioRetentionManager
         self.aiSettingsService = aiSettingsService
-        if downloadCoordinator?.modelManager !== modelManager {
-            downloadCoordinator = ModelDownloadCoordinator(modelManager: modelManager)
-        }
-        guard let downloadCoordinator else { return }
+        self.permissionManager = permissionManager
+        self.downloadCoordinator = downloadCoordinator
 
         if let window {
             window.contentViewController = NSHostingController(
@@ -57,7 +58,8 @@ final class SettingsWindowController: NSWindowController {
                     parakeetModelManager: parakeetModelManager,
                     snippetStore: snippetStore,
                     audioRetentionManager: audioRetentionManager,
-                    aiSettingsService: aiSettingsService
+                    aiSettingsService: aiSettingsService,
+                    permissionManager: permissionManager
                 )
             )
             resetWindowGeometry(window)
@@ -85,7 +87,8 @@ final class SettingsWindowController: NSWindowController {
                     parakeetModelManager: parakeetModelManager,
                     snippetStore: snippetStore,
                     audioRetentionManager: audioRetentionManager,
-                    aiSettingsService: aiSettingsService
+                    aiSettingsService: aiSettingsService,
+                    permissionManager: permissionManager
                 )
             )
             self.window = settingsWindow
@@ -101,14 +104,18 @@ final class SettingsWindowController: NSWindowController {
               let parakeetModelManager,
               let snippetStore,
               let audioRetentionManager,
-              let aiSettingsService else { return }
+              let aiSettingsService,
+              let permissionManager,
+              let downloadCoordinator else { return }
         show(
             modelManager: modelManager,
             speechRecognitionSettings: speechRecognitionSettings,
             parakeetModelManager: parakeetModelManager,
             snippetStore: snippetStore,
             audioRetentionManager: audioRetentionManager,
-            aiSettingsService: aiSettingsService
+            aiSettingsService: aiSettingsService,
+            permissionManager: permissionManager,
+            downloadCoordinator: downloadCoordinator
         )
     }
 

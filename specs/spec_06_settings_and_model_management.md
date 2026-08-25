@@ -4,7 +4,7 @@
 
 Specification 06 adds the administrative UI on top of the complete core pipeline and overlay from Specifications 01–05. It is a consumer of the existing `ModelManager`, `AppStateManager`, overlay preference contract, and menu-bar popover. It must not recreate the status item, replace the `NSPopover`, or change recording/transcription/injection behavior.
 
-The current Settings window has four destinations: **General**, **AI**, **Models**, and **About**. The implementation uses explicit sidebar buttons because relying on implicit `NavigationSplitView` list selection caused the original sections to be non-clickable.
+The current Settings window has five destinations: **General**, **AI**, **Models**, **Snippets**, and **About**. The implementation uses explicit sidebar buttons because relying on implicit `NavigationSplitView` list selection caused the original sections to be non-clickable.
 
 ## 1. Goals
 
@@ -28,29 +28,31 @@ The Settings layer must let users:
 
 | Component | Location | Current responsibility |
 |---|---|---|
-| `SettingsWindowController` | `voiceflow/UI/Settings/SettingsWindowController.swift` | Singleton Settings window lifecycle and fixed geometry |
-| `SettingsView` | `voiceflow/UI/Settings/SettingsView.swift` | Four-destination sidebar and detail routing |
+| `ApplicationComposition` | `voiceflow/App/ApplicationComposition.swift` | Owns long-lived runtime services and assembles the explicit Settings dependency graph |
+| `SettingsWindowController` | `voiceflow/UI/Settings/SettingsWindowController.swift` | Singleton Settings window lifecycle, fixed geometry, and explicit dependency forwarding |
+| `SettingsView` | `voiceflow/UI/Settings/SettingsView.swift` | Five-destination sidebar and detail routing |
 | `GeneralSettingsView` | `voiceflow/UI/Settings/GeneralSettingsView.swift` | General preferences and launch-at-login |
 | `AISettingsView` | `voiceflow/UI/Settings/AISettingsView.swift` | Provider selection, Claude credentials, model selection, and model refresh |
 | `AIProcessing` | `voiceflow/Core/LLM/AIProcessing.swift` | Provider-neutral request modes, compact prompts, optional screen-context slot, and provider-client contract |
 | `ModelsSettingsView` | `voiceflow/UI/Settings/ModelsSettingsView.swift` | Model catalog, download/import actions, progress, alerts, and Finder access |
-| `ModelDownloadCoordinator` | `voiceflow/UI/Settings/ModelDownloadCoordinator.swift` | Long-lived download task, progress, cancel, and error state |
+| `ModelDownloadCoordinator` | `voiceflow/UI/Settings/ModelDownloadCoordinator.swift` | Long-lived download task, progress, cancel, and error state; constructed by `ApplicationComposition` |
+| `VoiceFlowPermissionManaging` | `voiceflow/Core/Permissions/VoiceFlowPermissions.swift` | Permission status/request contract injected into General Settings; production uses `SystemVoiceFlowPermissionManager` |
 | `AboutSettingsView` | `voiceflow/UI/Settings/AboutSettingsView.swift` | Branding, metadata, links, and license |
 | `MenuBarPopoverView` | `voiceflow/UI/Popover/MenuBarPopoverView.swift` | Settings entry point and active model/status summary |
 
-The AppDelegate passes the shared `ModelManager` to `SettingsWindowController.shared.show(modelManager:)`. The window controller retains the same manager and a long-lived `ModelDownloadCoordinator`. Reopening Settings rebuilds the SwiftUI root view but preserves the manager and any active download.
+`ApplicationComposition` creates and owns the shared `ModelManager`, `ModelDownloadCoordinator`, `SystemVoiceFlowPermissionManager`, `SpeechRecognitionSettings`, `ParakeetModelManager`, `SnippetStore`, `AudioRetentionManager`, and `AISettingsService`. The menu-bar controller and popover forward these instances to `SettingsWindowController.shared.show(...)`. The window controller does not construct replacement services; it retains the injected references for its parameterless reopen path. Reopening Settings rebuilds the SwiftUI root view but preserves the shared managers and any active download.
 
 ## 3. Settings window
 
 `SettingsWindowController` is a main-actor singleton. The first window uses an intended content size of **760×500 pt** and a minimum content size of **680×420 pt**. It is a standard titled, closable, miniaturizable, resizable `NSWindow`, not an overlay panel. Closing it does not terminate the menu-bar app.
 
-Each `show(modelManager:)` call updates the retained manager, reuses the download coordinator when the manager is unchanged, recreates the SwiftUI root view, resets the window geometry to the intended size, brings it frontmost, and activates the application. This prevents the window from shrinking after switching tabs or reopening it.
+Each `show(...)` call receives the complete Settings dependency set, stores those shared references, recreates the SwiftUI root view, resets the window geometry to the intended size, brings it frontmost, and activates the application. The download coordinator is not recreated by the window controller, so download progress remains owned by the composition-created instance and survives tab changes or Settings reopening.
 
-`SettingsView.Destination` is the `Hashable` enum `general`, `ai`, `models`, and `about`. The sidebar uses explicit `Button` controls with a visual selection background. The detail pane renders exactly one of `GeneralSettingsView`, `AISettingsView`, `ModelsSettingsView`, or `AboutSettingsView`.
+`SettingsView.Destination` is the `Hashable` enum `general`, `ai`, `models`, `snippets`, and `about`. The sidebar uses explicit `Button` controls with a visual selection background. The detail pane renders exactly one of `GeneralSettingsView`, `AISettingsView`, `ModelsSettingsView`, `SnippetsSettingsView`, or `AboutSettingsView`.
 
 ## 4. General settings
 
-`GeneralSettingsView` uses `@AppStorage` and the following keys/defaults:
+`GeneralSettingsView` requires an injected `VoiceFlowPermissionManaging` instance and the shared `AudioRetentionManager`; it does not default-construct either service. It uses `@AppStorage` and the following keys/defaults:
 
 | Key | Default | Behavior |
 |---|---:|---|
@@ -82,7 +84,7 @@ The processor checks the AI prefix before Grammar Fix. The four cases are: a mat
 
 ## 5. Models pane
 
-`ModelsSettingsView` binds to the shared `ModelManager` and the long-lived `ModelDownloadCoordinator`. It contains refresh and **Import Model** controls, `Installed Models` and `Available to Download` sections, and a `Model location` area showing the canonical path with an **Open in Finder** button.
+`ModelsSettingsView` binds to the shared `ModelManager` and the composition-owned long-lived `ModelDownloadCoordinator`. It contains refresh and **Import Model** controls, `Installed Models` and `Available to Download` sections, and a `Model location` area showing the canonical path with an **Open in Finder** button.
 
 The pane does not hardcode model names, sizes, or installation state. It renders the current `availableModels` supplied by `ModelManager`, partitioned by `isDownloaded`. The manager’s valid installation contract is described in Specification 03.
 
@@ -121,13 +123,15 @@ The pane is informational and does not perform model or pipeline actions.
 
 ## 7. Menu-bar popover integration
 
-`MenuBarPopoverView` remains hosted by the existing transient `NSPopover`. It shows `VoiceFlow`, the state-derived status, the selected model display name or `No active model`, `Settings...`, and `Quit VoiceFlow`. The Settings button calls `SettingsWindowController.shared.show(modelManager:)`; it does not create a second window or replace the popover architecture.
+`MenuBarPopoverView` remains hosted by the existing transient `NSPopover`. It shows `VoiceFlow`, the state-derived status, the selected model display name or `No active model`, `Settings...`, and `Quit VoiceFlow`. The Settings button forwards the composition-owned model manager, download coordinator, permission manager, speech settings, provider managers, snippet store, retention manager, and AI settings service to `SettingsWindowController.shared.show(...)`; it does not create a second window, replacement service, or alternate popover architecture.
 
 ## 8. Tests and verification
 
 The current Settings tests are in `voiceflowTests/UI/SettingsTests.swift` and cover:
 
-- All four destinations and constructible root view.
+The construction tests must provide the permission manager, audio-retention manager, model managers, download coordinator, and AI settings service explicitly. They must not rely on Settings views constructing production services as defaults.
+
+- All five destinations and constructible root view.
 - Overlay default and persistence.
 - Completion sound default, persistence, and effect selection.
 - Installed/available model rendering and active selection persistence.
@@ -163,7 +167,7 @@ Manual verification must confirm:
 ## 9. Acceptance criteria
 
 - The singleton Settings window opens from the existing popover and does not terminate the app when closed.
-- General, AI, Models, and About are selectable by explicit working controls.
+- General, AI, Models, Snippets, and About are selectable by explicit working controls.
 - First launch presents the welcome and sequential permission onboarding; skipped or denied permissions remain recoverable from General → Permissions.
 - The window reopens at its intended 760×500 content size with the 680×420 minimum.
 - Launch-at-login uses `SMAppService.mainApp` and displays actionable errors.

@@ -68,9 +68,9 @@ Core business logic must not import SwiftUI. Provider SDKs and network clients s
 
 ## Ownership rules
 
-`ApplicationComposition` owns the long-lived runtime instances. `AppDelegate` owns lifecycle start/stop and passes the composition’s instances to UI controllers. Settings views receive the same `SnippetStore`, `AudioRetentionManager`, model managers, and download coordinator used by the runtime; they must not silently create replacement instances.
+`ApplicationComposition` owns the long-lived runtime instances, including `ModelDownloadCoordinator` and the app-wide `VoiceFlowPermissionManaging` implementation. `AppDelegate` owns lifecycle start/stop and passes the composition’s instances to UI controllers. The menu-bar controller and popover forward those same instances to `SettingsWindowController`. Settings views receive the same `SnippetStore`, `AudioRetentionManager`, model managers, download coordinator, and permission manager used by the runtime; they must not silently create replacement instances or default-construct services in production paths.
 
-`ModelManager` remains the WhisperKit lifecycle facade. Path resolution, model definitions, and preflight validation are pure/supporting concerns and may live in focused files, but download, import, select, delete, and readiness behavior must continue to use one canonical model root. FluidAudio remains a separate provider implementation because its bundle format and validation rules differ from WhisperKit’s.
+`ModelManager` remains the WhisperKit lifecycle facade. `ModelDownloadCoordinator` is a composition-owned UI-state coordinator around that facade; it is not created by `SettingsWindowController` or a SwiftUI view. Path resolution, model definitions, and preflight validation are pure/supporting concerns and may live in focused files, but download, import, select, delete, and readiness behavior must continue to use one canonical model root. FluidAudio remains a separate provider implementation because its bundle format and validation rules differ from WhisperKit’s.
 
 ## Documentation roles
 

@@ -43,6 +43,7 @@ struct SettingsView: View {
     let snippetStore: SnippetStore
     let audioRetentionManager: AudioRetentionManager
     let aiSettingsService: AISettingsService
+    let permissionManager: VoiceFlowPermissionManaging
     @State private var selection: Destination = .general
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
@@ -102,7 +103,10 @@ struct SettingsView: View {
     private func detailView(for destination: Destination) -> some View {
         switch destination {
         case .general:
-            GeneralSettingsView(audioRetentionManager: audioRetentionManager)
+            GeneralSettingsView(
+                permissionManager: permissionManager,
+                audioRetentionManager: audioRetentionManager
+            )
         case .ai:
             AISettingsView(settingsService: aiSettingsService)
         case .models:

@@ -17,6 +17,8 @@ final class ApplicationComposition {
     let snippetStore: SnippetStore
     let audioRetentionManager: AudioRetentionManager
     let aiSettingsService: AISettingsService
+    let permissionManager: VoiceFlowPermissionManaging
+    let downloadCoordinator: ModelDownloadCoordinator
 
     let menuBarController: MenuBarController
     let recordingCoordinator: RecordingCoordinator
@@ -37,6 +39,8 @@ final class ApplicationComposition {
         let snippetStore = SnippetStore()
         let audioRetentionManager = AudioRetentionManager()
         let aiSettingsService = AISettingsService()
+        let permissionManager = SystemVoiceFlowPermissionManager()
+        let downloadCoordinator = ModelDownloadCoordinator(modelManager: modelManager)
         let whisperKitEngine = TranscriptionEngine(modelManager: modelManager)
         let parakeetEngine = ParakeetTranscriptionEngine(modelManager: parakeetModelManager)
         let transcriptionEngine = SpeechTranscriptionRouter(
@@ -87,7 +91,9 @@ final class ApplicationComposition {
             parakeetModelManager: parakeetModelManager,
             snippetStore: snippetStore,
             audioRetentionManager: audioRetentionManager,
-            aiSettingsService: aiSettingsService
+            aiSettingsService: aiSettingsService,
+            permissionManager: permissionManager,
+            downloadCoordinator: downloadCoordinator
         )
 
         transcriptionCoordinator.onAIProcessingStarted = { [weak overlayWindowController] provider in
@@ -123,6 +129,8 @@ final class ApplicationComposition {
         self.snippetStore = snippetStore
         self.audioRetentionManager = audioRetentionManager
         self.aiSettingsService = aiSettingsService
+        self.permissionManager = permissionManager
+        self.downloadCoordinator = downloadCoordinator
         self.menuBarController = menuBarController
         self.recordingCoordinator = recordingCoordinator
         self.transcriptionCoordinator = transcriptionCoordinator
