@@ -85,7 +85,7 @@ final class MenuBarController {
         stopAnimationTimer()
 
         switch state {
-        case .idle, .completed:
+        case .idle, .completed, .copiedToClipboard:
             setMenuBarIcon(alpha: 1)
 
         case .recording:

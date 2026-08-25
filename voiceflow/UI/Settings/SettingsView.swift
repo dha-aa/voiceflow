@@ -41,6 +41,7 @@ struct SettingsView: View {
     let speechRecognitionSettings: SpeechRecognitionSettings
     let parakeetModelManager: ParakeetModelManager
     var snippetStore: SnippetStore = SnippetStore()
+    var audioRetentionManager: AudioRetentionManager = AudioRetentionManager()
     @State private var selection: Destination = .general
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
@@ -100,7 +101,7 @@ struct SettingsView: View {
     private func detailView(for destination: Destination) -> some View {
         switch destination {
         case .general:
-            GeneralSettingsView()
+            GeneralSettingsView(audioRetentionManager: audioRetentionManager)
         case .ai:
             AISettingsView()
         case .models:

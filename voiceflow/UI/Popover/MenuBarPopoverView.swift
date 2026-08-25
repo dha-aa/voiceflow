@@ -63,6 +63,7 @@ struct MenuBarPopoverView: View {
         switch stateManager.currentState {
         case .idle: "Ready"
         case .completed: "Done"
+        case .copiedToClipboard: "Copied to Clipboard"
         case .preparingModel: "Loading model"
         case .recording: "Listening"
         case .processing: "Processing"

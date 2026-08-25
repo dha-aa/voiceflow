@@ -42,9 +42,11 @@ final class CorePipelineIntegrationTests: XCTestCase {
             claudeProcessor: ClaudeCommandProcessor(userDefaults: aiDefaults)
         )
         let injector = TestTextInjector()
+        let clipboard = TestClipboardWriter()
         let injectionCoordinator = InjectionCoordinator(
             stateManager: stateManager,
-            injector: injector
+            injector: injector,
+            clipboardWriter: clipboard
         )
         let injectionComplete = expectation(description: "injection complete")
 
@@ -65,7 +67,8 @@ final class CorePipelineIntegrationTests: XCTestCase {
         await fulfillment(of: [injectionComplete], timeout: 1)
 
         XCTAssertEqual(stateManager.currentState, .idle)
-        XCTAssertEqual(injector.injectedTexts.map(\.text), ["hello pipeline test"])
+        XCTAssertEqual(clipboard.copiedTexts, ["hello pipeline test"])
+        XCTAssertTrue(injector.injectedTexts.isEmpty)
     }
 
     private let stateManager = AppStateManager()

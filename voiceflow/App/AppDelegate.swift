@@ -19,12 +19,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var transcriptionCoordinator: TranscriptionCoordinator?
     private var injectionCoordinator: InjectionCoordinator?
     private var overlayWindowController: OverlayWindowController?
+    private var audioRetentionManager: AudioRetentionManager?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let modelManager = ModelManager()
         let speechRecognitionSettings = SpeechRecognitionSettings()
         let parakeetModelManager = ParakeetModelManager()
         let snippetStore = SnippetStore()
+        let audioRetentionManager = AudioRetentionManager()
+        audioRetentionManager.startAutomaticCleanup()
         VoiceFlowLog.model.info(
             "application_identity bundle_identifier=\(Bundle.main.bundleIdentifier ?? "<missing>", privacy: .public) application_support_directory=\(modelManager.downloadBase.deletingLastPathComponent().path, privacy: .public) models_root_directory=\(modelManager.downloadBase.path, privacy: .public)"
         )
@@ -97,13 +100,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        recordingCoordinator.onRecordingCompleteWithContext = { [transcriptionCoordinator] audioURL, targetApplication, selectedText in
+        recordingCoordinator.onRecordingCompleteWithContext = { [transcriptionCoordinator, audioRetentionManager] audioURL, targetApplication, selectedText in
             Task { @MainActor in
                 await transcriptionCoordinator.transcribe(
                     audioURL: audioURL,
                     targetApp: targetApplication,
                     selectedText: selectedText
                 )
+                audioRetentionManager.cleanupExpiredRecordings()
             }
         }
 
@@ -123,6 +127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.injectionCoordinator = injectionCoordinator
         self.recordingCoordinator = recordingCoordinator
         self.overlayWindowController = overlayWindowController
+        self.audioRetentionManager = audioRetentionManager
         recordingCoordinator.start()
         overlayWindowController.start()
         OnboardingWindowController.shared.showIfNeeded()
@@ -141,6 +146,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         recordingCoordinator?.stop()
         overlayWindowController?.stop()
+        audioRetentionManager?.stopAutomaticCleanup()
         recordingCoordinator = nil
         transcriptionCoordinator = nil
         injectionCoordinator = nil
@@ -148,6 +154,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         speechRecognitionSettings = nil
         parakeetModelManager = nil
         overlayWindowController = nil
+        audioRetentionManager = nil
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

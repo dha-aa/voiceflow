@@ -63,6 +63,16 @@ final class RecordingOverlayViewTests: XCTestCase {
         controller.stop()
     }
 
+    func test_overlayView_showsCopiedToClipboardState() {
+        let model = RecordingOverlayModel()
+
+        model.showCopiedToClipboardState()
+
+        XCTAssertEqual(model.statusText, "Copied to Clipboard")
+        XCTAssertEqual(model.accessibilityStatusText, "Copied to Clipboard")
+        XCTAssertTrue(model.isVisible)
+    }
+
     func test_overlayView_showsDoneState_whenCompleted_thenHidesAfter400Milliseconds() async throws {
         let stateManager = AppStateManager()
         let defaults = UserDefaults(suiteName: "overlay-done-\(UUID().uuidString)")!

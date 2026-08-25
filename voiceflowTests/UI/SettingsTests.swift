@@ -100,6 +100,60 @@ final class SettingsNavigationTests: XCTestCase {
 
 @MainActor
 final class GeneralSettingsTests: XCTestCase {
+    func test_audioRetentionPolicy_defaultIsNeverDelete() {
+        let defaults = UserDefaults(suiteName: "audio-retention-default-\(UUID().uuidString)")!
+
+        XCTAssertEqual(VoiceFlowSettingsDefaults.audioRetentionPolicy(in: defaults), .never)
+    }
+
+    func test_audioRetentionPolicy_persistsSelectedPolicy() {
+        let defaults = UserDefaults(suiteName: "audio-retention-persist-\(UUID().uuidString)")!
+        defaults.set(AudioRetentionPolicy.threeDays.rawValue, forKey: VoiceFlowSettingsDefaults.audioRetentionPolicyKey)
+
+        XCTAssertEqual(VoiceFlowSettingsDefaults.audioRetentionPolicy(in: defaults), .threeDays)
+    }
+
+    func test_audioRetentionManager_deletesExpiredFilesAndKeepsRecentFiles() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("audio-retention-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let oldURL = directory.appendingPathComponent("old.wav")
+        let recentURL = directory.appendingPathComponent("recent.wav")
+        try Data([1]).write(to: oldURL)
+        try Data([2]).write(to: recentURL)
+        try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-4 * 24 * 60 * 60)], ofItemAtPath: oldURL.path)
+        try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-60)], ofItemAtPath: recentURL.path)
+
+        let manager = AudioRetentionManager(
+            audioDirectory: directory,
+            policy: .threeDays,
+            now: { now }
+        )
+        manager.cleanupExpiredRecordings()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: oldURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: recentURL.path))
+    }
+
+    func test_audioRetentionManager_deleteAllAudio_removesStoredWavFiles() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("audio-delete-all-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let audioURL = directory.appendingPathComponent("recording.wav")
+        let otherURL = directory.appendingPathComponent("keep.txt")
+        try Data([1]).write(to: audioURL)
+        try Data([2]).write(to: otherURL)
+
+        let manager = AudioRetentionManager(audioDirectory: directory, policy: .never)
+        manager.deleteAllAudio()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: audioURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: otherURL.path))
+    }
+
     func test_showRecordingOverlay_defaultIsTrue() {
         let defaults = UserDefaults(suiteName: "general-settings-default-\(UUID().uuidString)")!
 

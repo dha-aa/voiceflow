@@ -11,6 +11,7 @@ enum VoiceFlowSettingsDefaults {
     static let showRecordingOverlayKey = "showRecordingOverlay"
     static let playCompletionSoundKey = "playCompletionSound"
     static let completionSoundEffectKey = "completionSoundEffect"
+    static let audioRetentionPolicyKey = "audioRetentionPolicy"
 
     static func showRecordingOverlay(in defaults: UserDefaults = .standard) -> Bool {
         defaults.object(forKey: showRecordingOverlayKey) as? Bool ?? true
@@ -24,6 +25,11 @@ enum VoiceFlowSettingsDefaults {
         let rawValue = defaults.string(forKey: completionSoundEffectKey) ?? ""
         return CompletionSoundEffect(rawValue: rawValue) ?? .tink
     }
+
+    static func audioRetentionPolicy(in defaults: UserDefaults = .standard) -> AudioRetentionPolicy {
+        let rawValue = defaults.string(forKey: audioRetentionPolicyKey) ?? ""
+        return AudioRetentionPolicy(rawValue: rawValue) ?? .never
+    }
 }
 
 @MainActor
@@ -31,13 +37,20 @@ struct GeneralSettingsView: View {
     @AppStorage(VoiceFlowSettingsDefaults.showRecordingOverlayKey) private var showRecordingOverlay = true
     @AppStorage(VoiceFlowSettingsDefaults.playCompletionSoundKey) private var playCompletionSound = false
     @AppStorage(VoiceFlowSettingsDefaults.completionSoundEffectKey) private var completionSoundEffect = CompletionSoundEffect.tink.rawValue
+    @AppStorage(VoiceFlowSettingsDefaults.audioRetentionPolicyKey) private var audioRetentionPolicy = AudioRetentionPolicy.never.rawValue
     @State private var launchAtLoginError: String?
+    @State private var showingDeleteAllAudioConfirmation = false
     @State private var permissionStatuses: [VoiceFlowPermission: VoiceFlowPermissionStatus] = [:]
     @State private var requestingPermission: VoiceFlowPermission?
     private let permissionManager: VoiceFlowPermissionManaging
+    private let audioRetentionManager: AudioRetentionManager
 
-    init(permissionManager: VoiceFlowPermissionManaging? = nil) {
+    init(
+        permissionManager: VoiceFlowPermissionManaging? = nil,
+        audioRetentionManager: AudioRetentionManager? = nil
+    ) {
         self.permissionManager = permissionManager ?? SystemVoiceFlowPermissionManager()
+        self.audioRetentionManager = audioRetentionManager ?? AudioRetentionManager()
     }
 
     var body: some View {
@@ -83,6 +96,35 @@ struct GeneralSettingsView: View {
                 Text("Play a short sound after text is successfully injected.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            Section("Audio") {
+                Picker("Keep recorded audio", selection: $audioRetentionPolicy) {
+                    ForEach(AudioRetentionPolicy.allCases) { policy in
+                        Text(policy.rawValue).tag(policy.rawValue)
+                    }
+                }
+                .onChange(of: audioRetentionPolicy) { _, rawValue in
+                    if let policy = AudioRetentionPolicy(rawValue: rawValue) {
+                        audioRetentionManager.setPolicy(policy)
+                    }
+                }
+
+                Button("Delete All Audio", role: .destructive) {
+                    showingDeleteAllAudioConfirmation = true
+                }
+
+                Text("Recordings are stored locally in the VoiceFlow audio folder.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .alert("Delete All Audio?", isPresented: $showingDeleteAllAudioConfirmation) {
+                Button("Delete All Audio", role: .destructive) {
+                    audioRetentionManager.deleteAllAudio()
+                }
+                Button("Cancel", role: .cancel) { }
+            } message: {
+                Text("This permanently removes all stored VoiceFlow recordings.")
             }
 
             Section("Appearance") {

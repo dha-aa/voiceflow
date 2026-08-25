@@ -126,7 +126,7 @@ final class OverlayWindowController {
 
         // The core pipeline can reach idle immediately after injecting. Let
         // the overlay-owned Done timer finish its short presentation.
-        if state == .idle, overlayModel.isShowingDoneState {
+        if state == .idle, overlayModel.isShowingCompletionState {
             return
         }
 
@@ -137,7 +137,7 @@ final class OverlayWindowController {
         case .idle:
             // The core pipeline can reach idle immediately after injecting. Let
             // the overlay-owned Done timer finish its 400 ms presentation.
-            guard !overlayModel.isShowingDoneState else { return }
+            guard !overlayModel.isShowingCompletionState else { return }
             overlayModel.hide()
             hidePanel(animated: true)
 
@@ -159,6 +159,19 @@ final class OverlayWindowController {
 
         case .completed:
             overlayModel.showDoneState()
+            showPanel()
+            interactionTask = Task { @MainActor [weak self] in
+                do {
+                    try await Task.sleep(for: .milliseconds(400))
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled else { return }
+                self?.hideOverlay(animated: true)
+            }
+
+        case .copiedToClipboard:
+            overlayModel.showCopiedToClipboardState()
             showPanel()
             interactionTask = Task { @MainActor [weak self] in
                 do {

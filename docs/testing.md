@@ -12,7 +12,7 @@ Testing requires a Mac with macOS 14 or later and the full Xcode installation. T
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 ```
 
-The current automated baseline is **137 XCTest tests with zero failures**. Tests that require microphone, Accessibility, a live WhisperKit model, or another application are supplemented by manual verification rather than being made dependent on a particular user machine.
+The current automated baseline is **181 XCTest tests with zero failures**. Tests that require microphone, Accessibility, a live WhisperKit model, or another application are supplemented by manual verification rather than being made dependent on a particular user machine.
 
 ## Automated XCTest suite
 
@@ -35,7 +35,7 @@ xcodebuild \
 A successful run ends with output similar to:
 
 ```text
-Executed 137 tests, with 0 failures
+Executed 181 tests, with 0 failures
 ** TEST SUCCEEDED **
 ```
 
@@ -81,16 +81,16 @@ xcodebuild \
 | Area | Representative coverage |
 |---|---|
 | Fn monitoring | Key-down, key-up, hold threshold, duplicate-event protection, and monitor lifecycle behavior. |
-| Audio recording | Permission handling, start/stop behavior, no-audio handling, recorder failures, and deterministic test doubles. |
+| Audio recording | Permission handling, start/stop behavior, no-audio handling, recorder failures, app audio-directory placement, and deterministic test doubles. |
 | Recording pipeline | Fn hold/release state changes, recorded-file creation, mono 16 kHz WAV-compatible output, model-readiness gating, and transition into processing. |
 | Application state | Valid and invalid state transitions, completion timing, and safe error recovery. |
 | Local speech engines | WhisperKit package import and session-factory behavior; Parakeet/FluidAudio session loading through test doubles; engine routing, persisted selection, model readiness, caching, switching, missing models, and transcription error mapping. |
 | Model management | WhisperKit catalog entries, canonical local paths, direct Hub layout, component validation, nested-folder rejection, download progress, failed-load cleanup, persisted selection, active-model deletion protection, and Parakeet local-cache/platform status. |
 | Text processing | Conservative whitespace and formatting behavior without changing dictated meaning. |
-| Text injection | Empty input, missing target, Accessibility failure, keyboard fallback behavior, and injector error mapping. |
-| Injection coordination | Processing/injecting/completed transitions, successful completion sound selection, disabled sound behavior, and no sound on failures. |
-| Overlay UI | Loading model, Listening, Processing, provider-specific `Using Claude...`/`Using ChatGPT...` labels, Done, error states, animation cancellation, and approximately 400 ms completion dismissal. |
-| Settings UI | General, AI, Models, and About navigation; overlay visibility; completion sound defaults and persistence; model selection; download progress across tabs; model actions; Claude enablement; Grammar Fix toggle; provider/model persistence; custom-prefix persistence; Claude model-list decoding; masked Configured API-key status; Change/Remove controls; and microphone/Accessibility permission recovery. |
+| Text injection | Empty input, missing target, Accessibility failure, keyboard fallback behavior, focused text-input detection, clipboard fallback, and injector error mapping. |
+| Injection coordination | Processing/injecting/completed/clipboard-completed transitions, successful completion sound selection, disabled sound behavior, clipboard delivery, and no sound on failures. |
+| Overlay UI | Loading model, Listening, Processing, provider-specific `Using Claude...`/`Using ChatGPT...` labels, Done, Copied to Clipboard, error states, animation cancellation, and approximately 400 ms completion dismissal. |
+| Settings UI | General, AI, Models, Snippets, and About navigation; overlay visibility; completion sound defaults and persistence; audio-retention defaults and persistence; Delete All Audio; model selection; download progress across tabs; model actions; Claude enablement; Grammar Fix toggle; provider/model persistence; custom-prefix persistence; Claude model-list decoding; masked Configured API-key status; Change/Remove controls; and microphone/Accessibility permission recovery. |
 | Claude routing | Configurable word/phrase prefix parsing, case-insensitive matching, boundary protection, normal-dictation bypass, compact mode-specific prompt forwarding, selected-text forwarding, broad-context suppression when a selection exists, no-selection fallback, optional screen-context forwarding, missing-key handling, request response handling, coordinator routing, and Grammar Fix precedence. |
 | Menu-bar UI | State-dependent icon selection and native template rendering behavior. |
 
@@ -199,7 +199,18 @@ Verify that the overlay remains a single compact rounded pill without an extra g
 
 Switch macOS between Light and Dark Mode and confirm that the idle menu-bar identity icon remains visible through native template rendering. Recording and error states should retain their semantic colors. Open Settings repeatedly and switch among General, AI, Models, and About to confirm the window size and navigation remain stable. Reopen it several times and verify every `Toggle` retains the native switch appearance rather than becoming a blue button-like control. In **General → Permissions**, confirm the current Microphone and Accessibility status is shown and that **Grant Permission** and **Open System Settings** remain available for unresolved permissions.
 
-In General, confirm that completion sound is off by default, can be enabled, persists after relaunch, and offers Tink, Pop, and Glass. Verify that a sound plays only after successful text injection and never after transcription or injection failure.
+In General, confirm that completion sound is off by default, can be enabled, persists after relaunch, and offers Tink, Pop, and Glass. Verify that a sound plays only after successful text injection or clipboard copy and never after transcription or output failure.
+
+In General → Audio, confirm the retention picker offers Delete instantly, Delete after 5 hours, Delete after 3 days, Delete after 7 days, and Never delete, with Never delete as the fresh-install default. Record a short non-sensitive utterance, confirm the WAV appears under `~/Library/Application Support/dha-aa.voiceflow/audio/`, change the policy as needed, and verify eligible files are removed during cleanup while recent files remain. Use **Delete All Audio**, confirm the destructive prompt, and verify managed WAV recordings are removed without deleting unrelated files.
+
+### Clipboard fallback
+
+| Scenario | Procedure | Expected result |
+|---|---|---|
+| No active target | Close or unfocus editable applications, hold Fn, speak a short non-sensitive sentence, and release. | VoiceFlow transcribes locally, copies the final text to the general clipboard, shows **Copied to Clipboard**, and returns to idle. Press `⌘ + V` in a disposable field to verify the result. |
+| Non-text target | Focus a read-only or non-editable application element and complete dictation. | VoiceFlow detects that no supported text input is available, copies the result to the clipboard, and does not report a false injection success. |
+| Valid text target | Focus an editable TextEdit field and complete dictation. | VoiceFlow uses normal injection and shows **Done!**; it does not use the clipboard fallback. |
+| Clipboard failure | Exercise the injected clipboard failure double in XCTest. | The pipeline reports an output error and does not play the completion sound. |
 
 To test Claude without exposing a real key in test output, open **Settings → AI**, confirm Claude is the default provider, enter an Anthropic API key, and save it. Confirm that the UI shows a masked value such as `••••••••••••••••`, reports **Configured**, and provides **Change API Key** and **Remove API Key** controls without displaying the secret. Set a temporary custom prefix such as `Jarvis`, enable Claude commands, and confirm that the prefix persists after closing and reopening Settings. Press **Fetch available models** and verify that the model picker is populated from Anthropic; if the request fails, confirm the selected model remains usable and an actionable error is shown. Use a disposable TextEdit document, focus the field, hold Fn, and say a short request beginning with the configured prefix, such as `Jarvis, rewrite this sentence politely`. Confirm that only Claude’s response is injected and that the prefix is removed. Then verify the four routing combinations: with a matching prefix and Grammar Fix on, only the prefix remainder is sent as an AI request; with a matching prefix and Grammar Fix off, the same AI request path is used; without a matching prefix and Grammar Fix on, the complete ordinary transcript is sent for correction-only processing; and without a matching prefix and Grammar Fix off, the local text is injected unchanged with no Claude request. Confirm the AI command is not grammar-corrected before prefix removal. ChatGPT should be visibly marked as coming soon and must not make an OpenAI request in this version. Do not use private or sensitive speech in this test. Revoke or remove the key after testing if the Mac is shared.
 

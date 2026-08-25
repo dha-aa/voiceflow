@@ -23,7 +23,7 @@ final class InjectionCoordinatorTests: XCTestCase {
             completionSoundPlayer: soundPlayer
         )
 
-        await coordinator.inject(text: "hello", targetApp: nil)
+        await coordinator.inject(text: "hello", targetApp: activeTargetApp)
 
         XCTAssertEqual(stateManager.currentState, .idle)
         XCTAssertEqual(injector.injectedTexts.map(\.text), ["hello"])
@@ -44,7 +44,7 @@ final class InjectionCoordinatorTests: XCTestCase {
             completionSoundPlayer: soundPlayer
         )
 
-        await coordinator.inject(text: "hello", targetApp: nil)
+        await coordinator.inject(text: "hello", targetApp: activeTargetApp)
 
         XCTAssertEqual(stateManager.currentState, .idle)
         XCTAssertEqual(soundPlayer.playCount, 0)
@@ -59,7 +59,7 @@ final class InjectionCoordinatorTests: XCTestCase {
             injector: injector
         )
 
-        await coordinator.inject(text: "hello", targetApp: nil)
+        await coordinator.inject(text: "hello", targetApp: activeTargetApp)
 
         XCTAssertEqual(stateManager.currentState, .idle)
         XCTAssertEqual(injector.injectedTexts.map(\.text), ["hello"])
@@ -80,7 +80,7 @@ final class InjectionCoordinatorTests: XCTestCase {
             completionSoundPlayer: soundPlayer
         )
 
-        await coordinator.inject(text: "hello", targetApp: nil)
+        await coordinator.inject(text: "hello", targetApp: activeTargetApp)
 
         XCTAssertEqual(stateManager.currentState, .error(.injectionFailed))
         XCTAssertEqual(soundPlayer.playCount, 0)
@@ -96,10 +96,54 @@ final class InjectionCoordinatorTests: XCTestCase {
             injector: injector
         )
 
-        await coordinator.inject(text: "hello", targetApp: nil)
+        await coordinator.inject(text: "hello", targetApp: activeTargetApp)
 
         XCTAssertEqual(stateManager.currentState, .error(.injectionFailed))
         XCTAssertTrue(injector.injectedTexts.isEmpty)
+    }
+
+    func test_coordinator_withoutTarget_copiesTextToClipboard() async {
+        let stateManager = AppStateManager()
+        stateManager.transition(to: .injecting)
+        let injector = TestTextInjector()
+        let clipboard = TestClipboardWriter()
+        let coordinator = InjectionCoordinator(
+            stateManager: stateManager,
+            injector: injector,
+            clipboardWriter: clipboard
+        )
+
+        await coordinator.inject(text: "hello", targetApp: nil)
+
+        XCTAssertEqual(clipboard.copiedTexts, ["hello"])
+        XCTAssertTrue(injector.injectedTexts.isEmpty)
+        XCTAssertEqual(stateManager.currentState, .idle)
+    }
+
+    func test_coordinator_withoutFocusedTextInput_copiesTextToClipboard() async throws {
+        let stateManager = AppStateManager()
+        stateManager.transition(to: .injecting)
+        let injector = TestTextInjector()
+        injector.hasFocusedTextInput = false
+        let clipboard = TestClipboardWriter()
+        let targetApp = try XCTUnwrap(
+            NSRunningApplication(processIdentifier: ProcessInfo.processInfo.processIdentifier)
+        )
+        let coordinator = InjectionCoordinator(
+            stateManager: stateManager,
+            injector: injector,
+            clipboardWriter: clipboard
+        )
+
+        await coordinator.inject(text: "hello", targetApp: targetApp)
+
+        XCTAssertEqual(clipboard.copiedTexts, ["hello"])
+        XCTAssertTrue(injector.injectedTexts.isEmpty)
+        XCTAssertEqual(stateManager.currentState, .idle)
+    }
+
+    private var activeTargetApp: NSRunningApplication {
+        NSRunningApplication(processIdentifier: ProcessInfo.processInfo.processIdentifier)!
     }
 
     func test_coordinator_doesNotInjectOutsideInjectingState() async {

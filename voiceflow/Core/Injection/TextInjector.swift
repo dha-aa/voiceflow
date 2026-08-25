@@ -18,11 +18,35 @@ protocol TextInjecting: AnyObject {
     func inject(text: String, into targetApp: NSRunningApplication?) throws
 }
 
+protocol TextInputAvailabilityChecking: AnyObject {
+    func hasTextInput(in targetApp: NSRunningApplication) -> Bool
+}
+
+protocol ClipboardWriting: AnyObject {
+    func copy(text: String) throws
+}
+
+final class SystemClipboardWriter: ClipboardWriting {
+    enum ClipboardError: Error {
+        case clearFailed
+        case writeFailed
+    }
+
+    func copy(text: String) throws {
+        guard NSPasteboard.general.clearContents() != 0 else {
+            throw ClipboardError.clearFailed
+        }
+        guard NSPasteboard.general.setString(text, forType: .string) else {
+            throw ClipboardError.writeFailed
+        }
+    }
+}
+
 protocol FocusedTextSelectionReading: AnyObject {
     func selectedText(in targetApp: NSRunningApplication?) throws -> String?
 }
 
-final class TextInjector: TextInjecting, FocusedTextSelectionReading {
+final class TextInjector: TextInjecting, FocusedTextSelectionReading, TextInputAvailabilityChecking {
     private let keyboardEventPoster: KeyboardEventPosting
     private let permissionChecker: () -> Bool
     private let permissionRequester: () -> Void
@@ -48,6 +72,51 @@ final class TextInjector: TextInjecting, FocusedTextSelectionReading {
 
     func requestAccessibilityPermission() {
         permissionRequester()
+    }
+
+    func hasTextInput(in targetApp: NSRunningApplication) -> Bool {
+        guard targetApp.processIdentifier != 0,
+              isAccessibilityPermissionGranted,
+              let focusedElement = try? focusedElement(in: targetApp) else {
+            return false
+        }
+
+        var roleValue: CFTypeRef?
+        let roleResult = AXUIElementCopyAttributeValue(
+            focusedElement,
+            kAXRoleAttribute as CFString,
+            &roleValue
+        )
+        if roleResult == .success,
+           let role = roleValue as? String,
+           [
+               kAXTextFieldRole as String,
+               kAXTextAreaRole as String,
+               "AXSearchField",
+               kAXComboBoxRole as String
+           ].contains(role) {
+            return true
+        }
+
+        var value: CFTypeRef?
+        let valueResult = AXUIElementCopyAttributeValue(
+            focusedElement,
+            kAXValueAttribute as CFString,
+            &value
+        )
+        guard valueResult == .success else {
+            return false
+        }
+        guard (value as? String) != nil else {
+            return false
+        }
+
+        var selectedRange: CFTypeRef?
+        return AXUIElementCopyAttributeValue(
+            focusedElement,
+            kAXSelectedTextRangeAttribute as CFString,
+            &selectedRange
+        ) == .success
     }
 
     func selectedText(in targetApp: NSRunningApplication?) throws -> String? {

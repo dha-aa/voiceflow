@@ -17,7 +17,8 @@ VoiceFlow is a privacy-first native macOS menu-bar dictation application. Hold *
 |---|---|
 | Push-to-talk | A sustained Fn hold starts one recording session; releasing Fn stops it. A brief tap does not intentionally start dictation. |
 | Local transcription | WhisperKit or Parakeet TDT v2/v3 runs the selected Core ML model locally. The app reuses a loaded engine session when the selected engine/model has not changed. Parakeet v2 is English-focused; v3 is multilingual and batch-oriented. |
-| Local audio storage | Completed recordings are stored as UUID-named 16 kHz mono PCM float32 WAV files in `~/Library/Application Support/dha-aa.voiceflow/audio/`; failed recording setup removes incomplete files. |
+| Local audio storage | Completed recordings are stored as UUID-named 16 kHz mono PCM float32 WAV files in `~/Library/Application Support/dha-aa.voiceflow/audio/`. General settings control retention from instant deletion through 5 hours, 3 days, 7 days, or never delete, and provide Delete All Audio. |
+| Clipboard fallback | If no active text input is available, VoiceFlow still transcribes locally and copies the final text to the macOS clipboard instead of treating output as an injection failure. |
 | Snippets | Settings → Snippets provides local Name/Trigger/Value CRUD. Trigger phrases expand naturally, case-insensitively, before injection; stored values never enter AI requests or logs. |
 | Claude commands | Optional BYOK Claude processing is triggered only when a transcript starts with the user-configured prefix; normal dictation remains local. When selected text is available, only the selection and instruction are sent, and the result replaces that selection. |
 | Grammar Fix | Optional Claude grammar and punctuation correction applies only to ordinary speech without the configured AI prefix; AI commands always take precedence. |
@@ -26,8 +27,8 @@ VoiceFlow is a privacy-first native macOS menu-bar dictation application. Hold *
 | Text injection | The focused application is captured when recording begins. Accessibility-based insertion is attempted before keyboard-event fallback. |
 | Recording overlay | A compact floating HUD communicates Loading model, Listening, Processing, `Using Claude...` or `Using ChatGPT...` for AI requests, Done, and error states. |
 | Menu-bar status | The menu-bar icon reflects idle, recording, processing, completion, and error states. The idle identity mark is a native template image for Light and Dark Mode contrast. |
-| Completion feedback | General settings can enable a short completion sound and select Tink, Pop, or Glass. It is disabled by default and only plays after successful injection. |
-| Settings | General, AI, Models, Snippets, and About sections are available from the menu-bar application, with permission recovery in General. |
+| Completion feedback | General settings can enable a short completion sound and select Tink, Pop, or Glass. It is disabled by default and only plays after successful text injection or clipboard copy. |
+| Settings | General, AI, Models, Snippets, and About sections are available from the menu-bar application. General includes permissions, completion feedback, audio retention, and Delete All Audio. |
 | Privacy-safe diagnostics | Structured logs contain lifecycle metadata such as model identifiers, paths, durations, byte counts, and error categories—not audio, prompts, responses, transcripts, or inserted text. |
 
 ## Expected interaction
@@ -42,8 +43,8 @@ Fn released
   → optional AI processing
   → local snippet expansion
   → Using Claude... / Using ChatGPT... (only for an explicit configured AI command)
-  → text injection
-  → Done
+  → text injection or Copied to Clipboard
+  → Done / Copied to Clipboard
   → Idle
 ```
 
@@ -76,7 +77,7 @@ Matching is case-insensitive, respects whole-phrase boundaries, supports multi-w
 
 VoiceFlow currently targets **macOS 14.0 or later** and is built with the native SwiftUI/AppKit stack. Development requires the full Xcode installation, not only Command Line Tools. The project uses Swift Package Manager through the Xcode project and depends on [Argmax OSS Swift](https://github.com/argmaxinc/argmax-oss-swift) for WhisperKit and [FluidAudio](https://github.com/FluidInference/FluidAudio) 0.15.6 for Parakeet TDT v2/v3.
 
-A real dictation session requires microphone permission and Accessibility or Input Monitoring permission as requested by macOS. Text injection into another application cannot be verified from a build-only test; it must be tested manually with a permitted target application. Completed recordings are stored locally in the VoiceFlow audio folder under Application Support.
+A real dictation session requires microphone permission and Accessibility or Input Monitoring permission as requested by macOS. Text injection into another application cannot be verified from a build-only test; it must be tested manually with a permitted target application. Completed recordings are stored locally in the VoiceFlow audio folder under Application Support, and their retention is controlled from General Settings.
 
 
 ## Getting started
@@ -91,7 +92,7 @@ open voiceflow.xcodeproj
 
 Select the `voiceflow` scheme and run the app from Xcode. VoiceFlow appears as a menu-bar application rather than a normal Dock application. On the first launch, the onboarding window explains the workflow and presents Microphone and Accessibility permissions one at a time before asking macOS to display each system prompt. Screen Recording is explained as a future screen-context capability and is not requested by the current version. If a permission is skipped or denied, VoiceFlow remains usable where possible; unresolved permissions can later be requested or opened in **Settings → General → Permissions**.
 
-Open the menu-bar popover and go to **Settings → Models**. Select an installed model, download one, or use **Import Model** to choose a local WhisperKit Core ML model folder such as `Oriserve_Whisper-Hindi2Hinglish-Prime_889MB` from Finder. VoiceFlow validates the imported folder, verifies it can load through WhisperKit, and copies it into the managed model directory before showing it as installed. Choose **WhisperKit** or **Parakeet TDT v2/v3** in **Settings → Models**. WhisperKit uses the canonical model root below. Parakeet uses a separate FluidAudio cache and is currently supported on Apple Silicon only. Completed microphone recordings are stored separately from models in the local VoiceFlow audio folder:
+Open the menu-bar popover and go to **Settings → General** to choose Audio Retention or use **Delete All Audio**. Go to **Settings → Models**. Select an installed model, download one, or use **Import Model** to choose a local WhisperKit Core ML model folder such as `Oriserve_Whisper-Hindi2Hinglish-Prime_889MB` from Finder. VoiceFlow validates the imported folder, verifies it can load through WhisperKit, and copies it into the managed model directory before showing it as installed. Choose **WhisperKit** or **Parakeet TDT v2/v3** in **Settings → Models**. WhisperKit uses the canonical model root below. Parakeet uses a separate FluidAudio cache and is currently supported on Apple Silicon only. Completed microphone recordings are stored separately from models in the local VoiceFlow audio folder:
 
 ```text
 ~/Library/Application Support/dha-aa.voiceflow/audio
@@ -136,7 +137,7 @@ VoiceFlow’s normal recording-to-injection path is local. Network access is use
 
 Logs must remain metadata-only. Safe examples include model IDs, model paths, audio file identifiers, file sizes, durations, state names, process identifiers, and error categories. Do not log microphone samples, audio contents, raw transcripts, inserted text, clipboard contents, or secret environment variables.
 
-Completed WAV recordings are retained locally in the application audio directory and are not uploaded automatically. Snippet values are also local application data; snippet expansion is synchronous and local, and configured values are never sent to Claude, ChatGPT, or any other provider.
+WAV recordings remain local and are not uploaded automatically. General Settings controls whether recordings are deleted instantly, after 5 hours, after 3 days, after 7 days, or never automatically; Delete All Audio removes managed recordings manually. Snippet values are also local application data; snippet expansion is synchronous and local, and configured values are never sent to Claude, ChatGPT, or any other provider. If no active text input exists, VoiceFlow copies the final output to the general clipboard without logging its contents.
 
 The app is intentionally non-sandboxed because the current implementation uses global Fn monitoring and cross-process Accessibility text injection. The Release target enables Hardened Runtime and carries only the microphone entitlement required by the app’s current design.
 
@@ -164,7 +165,7 @@ xcodebuild \
   CODE_SIGNING_ALLOWED=NO
 ```
 
-The current suite contains **174 tests** covering the recording stage, app audio-directory placement, pipeline coordination, model management, transcription session behavior, text injection, overlay state, provider-aware overlay status, onboarding permission flow, AI provider/model persistence, custom-prefix routing, Grammar Fix precedence, provider-neutral request handling, selected-text forwarding, broad-context suppression when selected text exists, no-selection fallback, optional screen-context forwarding, Claude model-list decoding, Parakeet session reuse and error mapping, persisted speech-engine selection, router dispatch, local Snippet CRUD and expansion, AI privacy protection for snippet values, and related regressions. See [`docs/testing.md`](docs/testing.md) for the full verification matrix.
+The current suite contains **181 tests** covering the recording stage, app audio-directory placement, retention policy and cleanup, pipeline coordination, model management, transcription session behavior, text injection, clipboard fallback, overlay state, provider-aware overlay status, onboarding permission flow, AI provider/model persistence, custom-prefix routing, Grammar Fix precedence, provider-neutral request handling, selected-text forwarding, broad-context suppression when selected text exists, no-selection fallback, optional screen-context forwarding, Claude model-list decoding, Parakeet session reuse and error mapping, persisted speech-engine selection, router dispatch, local Snippet CRUD and expansion, AI privacy protection for snippet values, and related regressions. See [`docs/testing.md`](docs/testing.md) for the full verification matrix.
 
 Build a local unsigned app bundle into `build/` with the convenience script:
 

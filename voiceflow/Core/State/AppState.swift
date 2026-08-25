@@ -14,6 +14,7 @@ enum AppState: Equatable {
     case processing
     case injecting
     case completed
+    case copiedToClipboard
     case error(AppError)
 }
 

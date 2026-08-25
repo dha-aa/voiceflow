@@ -15,6 +15,7 @@ final class RecordingOverlayModel {
         case listening
         case processing
         case done
+        case copiedToClipboard
         case error(AppError)
     }
 
@@ -24,6 +25,10 @@ final class RecordingOverlayModel {
 
     var isShowingDoneState: Bool {
         presentationState == .done
+    }
+
+    var isShowingCompletionState: Bool {
+        presentationState == .done || presentationState == .copiedToClipboard
     }
 
     var isVisible: Bool {
@@ -43,6 +48,8 @@ final class RecordingOverlayModel {
             return "Processing..."
         case .done:
             return "Done!"
+        case .copiedToClipboard:
+            return "Copied to Clipboard"
         case .error(let error):
             return error.message
         case .hidden:
@@ -63,6 +70,8 @@ final class RecordingOverlayModel {
             return "Processing"
         case .done:
             return "Done"
+        case .copiedToClipboard:
+            return "Copied to Clipboard"
         case .error(let error):
             return error.message
         case .hidden:
@@ -99,6 +108,11 @@ final class RecordingOverlayModel {
 
     func showDoneState() {
         presentationState = .done
+        activeAIProvider = nil
+    }
+
+    func showCopiedToClipboardState() {
+        presentationState = .copiedToClipboard
         activeAIProvider = nil
     }
 
@@ -170,7 +184,7 @@ struct RecordingOverlayView: View {
         switch model.presentationState {
         case .preparingModel, .listening, .processing:
             true
-        case .hidden, .done, .error:
+        case .hidden, .done, .copiedToClipboard, .error:
             false
         }
     }
@@ -197,6 +211,10 @@ struct RecordingOverlayView: View {
                 .tint(.white)
         case .done:
             Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+                .font(.system(size: 16, weight: .semibold))
+        case .copiedToClipboard:
+            Image(systemName: "doc.on.clipboard.fill")
                 .foregroundStyle(.green)
                 .font(.system(size: 16, weight: .semibold))
         case .error:
