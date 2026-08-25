@@ -164,6 +164,8 @@ It should answer:
 
 Keep this document concise and update it when architecture changes.
 
+For the required workflow for synchronizing current specifications, historical `spec_changes/` records, tests, and project documentation, read [`docs/change-documentation.md`](docs/change-documentation.md) before editing or adding a feature.
+
 ## 9. Comments
 
 Do not add comments for obvious code.
