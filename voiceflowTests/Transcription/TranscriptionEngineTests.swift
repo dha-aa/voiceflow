@@ -123,6 +123,26 @@ final class TranscriptionEngineTests: XCTestCase {
         XCTAssertEqual(factory.makeCount, 1)
     }
 
+    func test_transcriptionEngine_reusesDownloadValidatedSessionWhenModelBecomesActive() async throws {
+        let manager = try makeManagerWithDownloadedModel()
+        let factory = TestSessionFactory(result: .success("ready"))
+        let engine = TranscriptionEngine(modelManager: manager, sessionFactory: factory)
+        let modelFolder = try manager.resolveInstalledModel(id: "tiny.en")
+
+        try await engine.validateModelLoad(
+            modelID: "tiny.en",
+            modelFolder: modelFolder,
+            downloadBase: manager.downloadBase
+        )
+        XCTAssertEqual(factory.makeCount, 1)
+
+        manager.selectModel(id: "tiny.en")
+        engine.modelSelectionDidChange()
+        try await engine.waitUntilReady()
+
+        XCTAssertEqual(factory.makeCount, 1)
+    }
+
     func test_transcriptionEngine_replacesPreloadedSessionWhenSelectionChanges() async throws {
         let manager = try makeManagerWithDownloadedModels()
         manager.selectModel(id: "tiny.en")

@@ -90,18 +90,38 @@ final class TranscriptionEngine: WhisperKitModelLoadValidator, SpeechTranscripti
     /// The task is owned by the engine so it can be cancelled when selection changes,
     /// and an eventual transcription request shares the same in-flight load.
     func preloadSelectedModel() {
+        guard let selectedModelID = modelManager.selectedModelId,
+              !selectedModelID.isEmpty else {
+            preloadTask?.cancel()
+            preloadTask = nil
+            inFlightLoadTask?.cancel()
+            inFlightLoadTask = nil
+            inFlightModelID = nil
+            invalidateCachedSession()
+            VoiceFlowLog.transcription.debug("model_preload_skipped reason=model_not_selected")
+            return
+        }
+
+        // Download validation may have already loaded this exact model. Keep the
+        // validated session instead of discarding it and starting a second load.
+        if cachedSession != nil, cachedModelID == selectedModelID {
+            VoiceFlowLog.transcription.info("model_preload_skipped model_id=\(selectedModelID, privacy: .public) reason=session_already_ready")
+            return
+        }
+
+        // A selection/availability callback can arrive while the same model is
+        // still loading. Preserve that work; waitUntilReady() joins it.
+        if inFlightLoadTask != nil, inFlightModelID == selectedModelID {
+            VoiceFlowLog.transcription.info("model_preload_skipped model_id=\(selectedModelID, privacy: .public) reason=load_already_in_flight")
+            return
+        }
+
         preloadTask?.cancel()
         preloadTask = nil
         inFlightLoadTask?.cancel()
         inFlightLoadTask = nil
         inFlightModelID = nil
         invalidateCachedSession()
-
-        guard let selectedModelID = modelManager.selectedModelId,
-              !selectedModelID.isEmpty else {
-            VoiceFlowLog.transcription.debug("model_preload_skipped reason=model_not_selected")
-            return
-        }
 
         VoiceFlowLog.transcription.info("model_preload_requested model_id=\(selectedModelID, privacy: .public)")
         preloadTask = Task { @MainActor [weak self] in

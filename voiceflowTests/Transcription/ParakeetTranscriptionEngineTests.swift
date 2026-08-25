@@ -220,6 +220,19 @@ final class ParakeetTranscriptionEngineTests: XCTestCase {
         XCTAssertEqual(factory.makeCount, 1)
     }
 
+    func test_repeatedAvailabilityPreloadReusesReadyParakeetSession() async throws {
+        let provider = TestParakeetModelProvider(isInstalled: true)
+        let factory = TestParakeetSessionFactory(result: .success("ready"))
+        let engine = ParakeetTranscriptionEngine(modelManager: provider, sessionFactory: factory)
+
+        engine.preloadSelectedModel()
+        await waitForFactoryCount(1, factory: factory)
+        engine.preloadSelectedModel()
+        try await engine.waitUntilReady()
+
+        XCTAssertEqual(factory.makeCount, 1)
+    }
+
     func test_transcribeMapsSessionFailure() async throws {
         let provider = TestParakeetModelProvider(isInstalled: true)
         let factory = TestParakeetSessionFactory(
@@ -245,6 +258,16 @@ final class ParakeetTranscriptionEngineTests: XCTestCase {
         try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
         for content in ["model.mil", "metadata.json", "coremldata.bin"] {
             try Data(content.utf8).write(to: bundle.appendingPathComponent(content))
+        }
+    }
+
+    private func waitForFactoryCount(
+        _ expectedCount: Int,
+        factory: TestParakeetSessionFactory
+    ) async {
+        for _ in 0..<100 {
+            if factory.makeCount >= expectedCount { return }
+            await Task.yield()
         }
     }
 
