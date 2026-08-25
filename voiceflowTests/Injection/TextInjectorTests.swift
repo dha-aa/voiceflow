@@ -9,6 +9,81 @@ import XCTest
 
 @MainActor
 final class TextInjectorTests: XCTestCase {
+    func test_textInjector_usesFrontmostKeyboardEvents_forTerminalFamily() {
+        XCTAssertTrue(TextInjector.usesFrontmostKeyboardEvents(for: "com.apple.Terminal"))
+        XCTAssertTrue(TextInjector.usesFrontmostKeyboardEvents(for: "com.googlecode.iterm2"))
+        XCTAssertFalse(TextInjector.usesFrontmostKeyboardEvents(for: "com.apple.TextEdit"))
+        XCTAssertFalse(TextInjector.usesFrontmostKeyboardEvents(for: nil))
+    }
+
+    func test_textInjector_usesPasteWriter_forTerminalTarget() throws {
+        let poster = TestKeyboardEventPoster()
+        let paster = TestTerminalTextPaster()
+        let injector = TextInjector(
+            keyboardEventPoster: poster,
+            terminalTextPaster: paster,
+            permissionChecker: { true },
+            bundleIdentifierProvider: { _ in "com.apple.Terminal" }
+        )
+        let targetApp = try XCTUnwrap(
+            NSRunningApplication(processIdentifier: ProcessInfo.processInfo.processIdentifier)
+        )
+
+        try injector.inject(text: "echo hello", into: targetApp)
+
+        XCTAssertEqual(paster.pastedTexts, ["echo hello"])
+        XCTAssertTrue(poster.postedTexts.isEmpty)
+    }
+
+    func test_terminalPasteMovesInputToEndOfLine() throws {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("VoiceFlowTerminalEndTests"))
+        let clipboardWriter = TestPasteboardClipboardWriter(pasteboard: pasteboard)
+        let commandPoster = TestPasteCommandPoster()
+        let paster = SystemTerminalTextPaster(
+            clipboardWriter: clipboardWriter,
+            pasteCommandPoster: commandPoster,
+            pasteboard: pasteboard,
+            restoreDelay: 0
+        )
+
+        try paster.paste(text: "terminal output")
+
+        XCTAssertEqual(commandPoster.postCount, 1)
+        XCTAssertEqual(commandPoster.endOfLinePostCount, 1)
+    }
+
+    func test_textInjector_placesCaretAtEndOfUpdatedText() {
+        XCTAssertEqual(
+            TextInjector.endCaretLocation(
+                existingText: "before after",
+                selectedRange: NSRange(location: 0, length: 6),
+                replacement: "replacement"
+            ),
+            ("replacement after" as NSString).length
+        )
+    }
+
+    func test_terminalPasteRestoresPreviousClipboardContents() throws {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("VoiceFlowTerminalPasteTests"))
+        pasteboard.clearContents()
+        pasteboard.setString("previous clipboard", forType: .string)
+        let clipboardWriter = TestPasteboardClipboardWriter(pasteboard: pasteboard)
+        let commandPoster = TestPasteCommandPoster()
+        let paster = SystemTerminalTextPaster(
+            clipboardWriter: clipboardWriter,
+            pasteCommandPoster: commandPoster,
+            pasteboard: pasteboard,
+            restoreDelay: 0
+        )
+
+        try paster.paste(text: "terminal output")
+
+        XCTAssertEqual(clipboardWriter.copiedTexts, ["terminal output"])
+        XCTAssertEqual(commandPoster.postCount, 1)
+        XCTAssertEqual(pasteboard.string(forType: .string), "previous clipboard")
+        pasteboard.clearContents()
+    }
+
     func test_textInjector_injectsText_intoFocusedApp() throws {
         let poster = TestKeyboardEventPoster()
         let injector = TextInjector(

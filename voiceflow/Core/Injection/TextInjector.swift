@@ -10,6 +10,17 @@ import OSLog
 
 protocol KeyboardEventPosting {
     func post(text: String, to processIdentifier: pid_t) throws
+    func post(text: String, to processIdentifier: pid_t, preferFrontmostSession: Bool) throws
+}
+
+extension KeyboardEventPosting {
+    func post(text: String, to processIdentifier: pid_t, preferFrontmostSession: Bool) throws {
+        try post(text: text, to: processIdentifier)
+    }
+}
+
+protocol TerminalTextPasting: AnyObject {
+    func paste(text: String) throws
 }
 
 protocol TextInjecting: AnyObject {
@@ -46,10 +57,105 @@ protocol FocusedTextSelectionReading: AnyObject {
     func selectedText(in targetApp: NSRunningApplication?) throws -> String?
 }
 
+final class SystemTerminalTextPaster: TerminalTextPasting {
+    private let clipboardWriter: ClipboardWriting
+    private let pasteCommandPoster: PasteCommandPosting
+    private let pasteboard: NSPasteboard
+    private let restoreDelay: TimeInterval
+
+    init(
+        clipboardWriter: ClipboardWriting = SystemClipboardWriter(),
+        pasteCommandPoster: PasteCommandPosting = CGEventPasteCommandPoster(),
+        pasteboard: NSPasteboard = .general,
+        restoreDelay: TimeInterval = 0.05
+    ) {
+        self.clipboardWriter = clipboardWriter
+        self.pasteCommandPoster = pasteCommandPoster
+        self.pasteboard = pasteboard
+        self.restoreDelay = restoreDelay
+    }
+
+    func paste(text: String) throws {
+        let snapshot = PasteboardSnapshot(pasteboard: pasteboard)
+        try clipboardWriter.copy(text: text)
+        do {
+            try pasteCommandPoster.postPasteCommand()
+            Thread.sleep(forTimeInterval: restoreDelay)
+            try pasteCommandPoster.postEndOfLineCommand()
+            Thread.sleep(forTimeInterval: restoreDelay)
+            snapshot.restore(to: pasteboard)
+        } catch {
+            snapshot.restore(to: pasteboard)
+            throw error
+        }
+    }
+}
+
+private struct PasteboardSnapshot {
+    private let items: [[NSPasteboard.PasteboardType: Data]]
+
+    init(pasteboard: NSPasteboard) {
+        items = (pasteboard.pasteboardItems ?? []).map { item in
+            Dictionary(uniqueKeysWithValues: item.types.compactMap { type in
+                guard let data = item.data(forType: type) else { return nil }
+                return (type, data)
+            })
+        }
+    }
+
+    func restore(to pasteboard: NSPasteboard) {
+        pasteboard.clearContents()
+        for itemData in items {
+            let item = NSPasteboardItem()
+            for (type, data) in itemData {
+                item.setData(data, forType: type)
+            }
+            pasteboard.writeObjects([item])
+        }
+    }
+}
+
+protocol PasteCommandPosting {
+    func postPasteCommand() throws
+    func postEndOfLineCommand() throws
+}
+
+extension PasteCommandPosting {
+    func postEndOfLineCommand() throws {}
+}
+
+private struct CGEventPasteCommandPoster: PasteCommandPosting {
+    func postPasteCommand() throws {
+        guard let eventSource = CGEventSource(stateID: .combinedSessionState),
+              let keyDown = CGEvent(keyboardEventSource: eventSource, virtualKey: 0x09, keyDown: true),
+              let keyUp = CGEvent(keyboardEventSource: eventSource, virtualKey: 0x09, keyDown: false) else {
+            throw TextInjector.TextInjectionError.eventCreationFailed
+        }
+        keyDown.flags = .maskCommand
+        keyUp.flags = .maskCommand
+        keyDown.post(tap: .cghidEventTap)
+        keyUp.post(tap: .cghidEventTap)
+    }
+
+    func postEndOfLineCommand() throws {
+        guard let eventSource = CGEventSource(stateID: .combinedSessionState),
+              let keyDown = CGEvent(keyboardEventSource: eventSource, virtualKey: 0x0E, keyDown: true),
+              let keyUp = CGEvent(keyboardEventSource: eventSource, virtualKey: 0x0E, keyDown: false) else {
+            throw TextInjector.TextInjectionError.eventCreationFailed
+        }
+        keyDown.flags = .maskControl
+        keyUp.flags = .maskControl
+        keyDown.post(tap: .cghidEventTap)
+        keyUp.post(tap: .cghidEventTap)
+    }
+}
+
 final class TextInjector: TextInjecting, FocusedTextSelectionReading, TextInputAvailabilityChecking {
     private let keyboardEventPoster: KeyboardEventPosting
+    private let terminalTextPaster: TerminalTextPasting
     private let permissionChecker: () -> Bool
     private let permissionRequester: () -> Void
+    private let bundleIdentifierProvider: (NSRunningApplication) -> String?
 
     var isAccessibilityPermissionGranted: Bool {
         permissionChecker()
@@ -57,7 +163,9 @@ final class TextInjector: TextInjecting, FocusedTextSelectionReading, TextInputA
 
     init(
         keyboardEventPoster: KeyboardEventPosting = CGEventKeyboardEventPoster(),
+        terminalTextPaster: TerminalTextPasting = SystemTerminalTextPaster(),
         permissionChecker: @escaping () -> Bool = { AXIsProcessTrusted() },
+        bundleIdentifierProvider: @escaping (NSRunningApplication) -> String? = { $0.bundleIdentifier },
         permissionRequester: @escaping () -> Void = {
             let options = [
                 kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true
@@ -66,8 +174,10 @@ final class TextInjector: TextInjecting, FocusedTextSelectionReading, TextInputA
         }
     ) {
         self.keyboardEventPoster = keyboardEventPoster
+        self.terminalTextPaster = terminalTextPaster
         self.permissionChecker = permissionChecker
         self.permissionRequester = permissionRequester
+        self.bundleIdentifierProvider = bundleIdentifierProvider
     }
 
     func requestAccessibilityPermission() {
@@ -76,8 +186,13 @@ final class TextInjector: TextInjecting, FocusedTextSelectionReading, TextInputA
 
     func hasTextInput(in targetApp: NSRunningApplication) -> Bool {
         guard targetApp.processIdentifier != 0,
-              isAccessibilityPermissionGranted,
-              let focusedElement = try? focusedElement(in: targetApp) else {
+              isAccessibilityPermissionGranted else {
+            return false
+        }
+        if Self.usesFrontmostKeyboardEvents(for: targetApp.bundleIdentifier) {
+            return true
+        }
+        guard let focusedElement = try? focusedElement(in: targetApp) else {
             return false
         }
 
@@ -165,6 +280,29 @@ final class TextInjector: TextInjecting, FocusedTextSelectionReading, TextInputA
         return Self.selectedText(from: currentText, range: range)
     }
 
+    static func usesFrontmostKeyboardEvents(for bundleIdentifier: String?) -> Bool {
+        guard let bundleIdentifier else { return false }
+        return [
+            "com.apple.Terminal",
+            "com.googlecode.iterm2",
+            "io.alacritty",
+            "com.mitchellh.ghostty",
+            "net.kovidgoyal.kitty",
+            "org.wezfurlong.wezterm"
+        ].contains(bundleIdentifier)
+    }
+
+    static func endCaretLocation(
+        existingText: String,
+        selectedRange: NSRange,
+        replacement: String
+    ) -> Int {
+        let textLength = (existingText as NSString).length
+        let location = min(max(selectedRange.location, 0), textLength)
+        let length = min(max(selectedRange.length, 0), textLength - location)
+        return textLength - length + (replacement as NSString).length
+    }
+
     static func selectedText(from value: String, range: NSRange) -> String? {
         let value = value as NSString
         guard range.location >= 0,
@@ -202,6 +340,16 @@ final class TextInjector: TextInjecting, FocusedTextSelectionReading, TextInputA
             throw TextInjectionError.accessibilityPermissionDenied
         }
 
+        if Self.usesFrontmostKeyboardEvents(for: bundleIdentifierProvider(targetApp)) {
+            do {
+                try terminalTextPaster.paste(text: text)
+                VoiceFlowLog.pipeline.info("text_injection_method_succeeded method=terminal_paste")
+                return
+            } catch {
+                VoiceFlowLog.pipeline.error("text_injection_method_failed method=terminal_paste error=\(String(describing: error), privacy: .public)")
+            }
+        }
+
         if accessibilityTrusted {
             do {
                 try injectUsingAccessibilityAPI(text: text, into: targetApp)
@@ -213,8 +361,13 @@ final class TextInjector: TextInjecting, FocusedTextSelectionReading, TextInputA
         }
 
         do {
-            try keyboardEventPoster.post(text: text, to: processIdentifier)
-            VoiceFlowLog.pipeline.info("text_injection_method_succeeded method=keyboard_events")
+            let useFrontmostSession = Self.usesFrontmostKeyboardEvents(for: bundleIdentifierProvider(targetApp))
+            try keyboardEventPoster.post(
+                text: text,
+                to: processIdentifier,
+                preferFrontmostSession: useFrontmostSession
+            )
+            VoiceFlowLog.pipeline.info("text_injection_method_succeeded method=keyboard_events frontmost_session=\(useFrontmostSession, privacy: .public)")
         } catch {
             do {
                 try injectUsingAccessibilityAPI(text: text, into: targetApp)
@@ -264,7 +417,11 @@ final class TextInjector: TextInjecting, FocusedTextSelectionReading, TextInputA
         }
 
         var caret = CFRange(
-            location: selectedRange.location + (text as NSString).length,
+            location: Self.endCaretLocation(
+                existingText: existingText,
+                selectedRange: selectedRange,
+                replacement: text
+            ),
             length: 0
         )
         if let caretValue = AXValueCreate(.cfRange, &caret) {
@@ -348,6 +505,10 @@ private struct CGEventKeyboardEventPoster: KeyboardEventPosting {
     private let chunkSize = 20
 
     func post(text: String, to processIdentifier: pid_t) throws {
+        try post(text: text, to: processIdentifier, preferFrontmostSession: false)
+    }
+
+    func post(text: String, to processIdentifier: pid_t, preferFrontmostSession: Bool) throws {
         guard let eventSource = CGEventSource(stateID: .combinedSessionState) else {
             throw TextInjector.TextInjectionError.eventSourceUnavailable
         }
@@ -376,8 +537,13 @@ private struct CGEventKeyboardEventPoster: KeyboardEventPosting {
                     unicodeString: buffer.baseAddress
                 )
             }
-            keyDown.postToPid(processIdentifier)
-            keyUp.postToPid(processIdentifier)
+            if preferFrontmostSession {
+                keyDown.post(tap: .cghidEventTap)
+                keyUp.post(tap: .cghidEventTap)
+            } else {
+                keyDown.postToPid(processIdentifier)
+                keyUp.postToPid(processIdentifier)
+            }
         }
     }
 }

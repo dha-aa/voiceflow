@@ -12,7 +12,7 @@ Testing requires a Mac with macOS 14 or later and the full Xcode installation. T
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 ```
 
-The current automated baseline is **181 XCTest tests with zero failures**. Tests that require microphone, Accessibility, a live WhisperKit model, or another application are supplemented by manual verification rather than being made dependent on a particular user machine.
+The current automated baseline is **186 XCTest tests with zero failures**. Tests that require microphone, Accessibility, a live WhisperKit model, or another application are supplemented by manual verification rather than being made dependent on a particular user machine.
 
 ## Automated XCTest suite
 
@@ -35,7 +35,7 @@ xcodebuild \
 A successful run ends with output similar to:
 
 ```text
-Executed 181 tests, with 0 failures
+Executed 186 tests, with 0 failures
 ** TEST SUCCEEDED **
 ```
 
@@ -87,7 +87,7 @@ xcodebuild \
 | Local speech engines | WhisperKit package import and session-factory behavior; Parakeet/FluidAudio session loading through test doubles; engine routing, persisted selection, model readiness, caching, switching, missing models, and transcription error mapping. |
 | Model management | WhisperKit catalog entries, canonical local paths, direct Hub layout, component validation, nested-folder rejection, download progress, failed-load cleanup, persisted selection, active-model deletion protection, and Parakeet local-cache/platform status. |
 | Text processing | Conservative whitespace and formatting behavior without changing dictated meaning. |
-| Text injection | Empty input, missing target, Accessibility failure, keyboard fallback behavior, focused text-input detection, clipboard fallback, and injector error mapping. |
+| Text injection | Empty input, missing target, Accessibility failure, keyboard fallback behavior, Terminal-family paste routing, line-end normalization and clipboard restoration, end-of-text caret placement, focused text-input detection, clipboard fallback, and injector error mapping. |
 | Injection coordination | Processing/injecting/completed/clipboard-completed transitions, successful completion sound selection, disabled sound behavior, clipboard delivery, and no sound on failures. |
 | Overlay UI | Loading model, Listening, Processing, provider-specific `Using Claude...`/`Using ChatGPT...` labels, Done, Copied to Clipboard, error states, animation cancellation, and approximately 400 ms completion dismissal. |
 | Settings UI | General, AI, Models, Snippets, and About navigation; overlay visibility; completion sound defaults and persistence; audio-retention defaults and persistence; Delete All Audio; model selection; download progress across tabs; model actions; Claude enablement; Grammar Fix toggle; provider/model persistence; custom-prefix persistence; Claude model-list decoding; masked Configured API-key status; Change/Remove controls; and microphone/Accessibility permission recovery. |
@@ -183,11 +183,11 @@ VoiceFlow expects the direct WhisperKit Hub repository layout below that root an
 
 | Scenario | Procedure | Expected result |
 |---|---|---|
-| Accessibility permitted | Focus an editable TextEdit field and complete dictation. | Text is inserted at the focused caret or selected range and the clipboard is not unexpectedly destroyed. |
+| Accessibility permitted | Focus an editable TextEdit field, optionally select text, and complete dictation. | Text is inserted at the focused caret or selected range, the resulting caret is at the end of the updated value, and the clipboard is not unexpectedly destroyed. |
 | Accessibility denied | Revoke permission, complete a session, and observe the result. | VoiceFlow reports an injection failure and provides permission guidance; text is not silently reported as inserted. |
+| Terminal injection | Focus a Terminal shell prompt, copy a harmless clipboard value, hold Fn, speak a short non-sensitive command or sentence, and release Fn. | VoiceFlow temporarily pastes the result at the shell prompt through frontmost Command-V, moves the shell caret to end-of-line, shows Done, restores the previous clipboard value, and does not press Enter automatically. Accessibility permission and Terminal/Input Monitoring approval must be granted. |
 | Target changes | Focus an application, hold Fn, switch or close the target before release, and complete the session. | The failure is handled without a crash and the app returns to a safe state. |
 | Read-only target | Focus a non-editable field and complete a session. | Injection failure is reported clearly; no false success state is shown. |
-| Terminal target | Test in Terminal or another terminal emulator when relevant to the change. | Record whether keyboard-event injection works for that target and document any limitation. |
 
 ### First-launch onboarding checks
 
