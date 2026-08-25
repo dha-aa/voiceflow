@@ -6,6 +6,7 @@
 //
 
 import AVFoundation
+import Foundation
 import Observation
 import OSLog
 
@@ -47,6 +48,7 @@ final class AudioRecorder: AudioRecording {
     private var recordingURL: URL?
     private let engineProvider: AudioEngineProviding
     private let permissionRequester: () async -> Bool
+    private let audioDirectory: URL
     private let metricsLock = NSLock()
     private var bufferCount = 0
     private var outputFrameCount: AVAudioFrameCount = 0
@@ -57,12 +59,38 @@ final class AudioRecorder: AudioRecording {
     private let sampleRate: Double = 16_000
     private let channels: AVAudioChannelCount = 1
 
+    /// The persistent folder used for completed VoiceFlow recordings.
+    /// In a sandboxed build, this resolves inside the app's Application Support container.
+    static var appAudioDirectory: URL {
+        guard let applicationSupport = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first else {
+            preconditionFailure("VoiceFlow requires an Application Support directory")
+        }
+        guard let bundleIdentifier = Bundle.main.bundleIdentifier,
+              !bundleIdentifier.isEmpty else {
+            preconditionFailure("VoiceFlow requires a stable CFBundleIdentifier")
+        }
+
+        let directory = applicationSupport
+            .appendingPathComponent(bundleIdentifier, isDirectory: true)
+            .appendingPathComponent("audio", isDirectory: true)
+        try? FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        return directory
+    }
+
     init(
         engineProvider: AudioEngineProviding = AVAudioEngineProvider(),
-        permissionRequester: @escaping () async -> Bool = AudioRecorder.requestSystemPermission
+        permissionRequester: @escaping () async -> Bool = AudioRecorder.requestSystemPermission,
+        audioDirectory: URL = AudioRecorder.appAudioDirectory
     ) {
         self.engineProvider = engineProvider
         self.permissionRequester = permissionRequester
+        self.audioDirectory = audioDirectory.standardizedFileURL
     }
 
     func requestPermission() async -> Bool {
@@ -99,12 +127,16 @@ final class AudioRecorder: AudioRecording {
         let inputNode = engine.inputNode
         let inputFormat = inputNode.outputFormat(forBus: 0)
         let converter = AVAudioConverter(from: inputFormat, to: targetFormat)
-        let outputURL = FileManager.default.temporaryDirectory
+        let outputURL = audioDirectory
             .appendingPathComponent("recording_\(UUID().uuidString).wav")
         let audioID = VoiceFlowLog.audioIdentifier(for: outputURL)
         VoiceFlowLog.audio.info("recording_input_format recording_id=\(audioID, privacy: .public) sample_rate=\(inputFormat.sampleRate, privacy: .public) channels=\(inputFormat.channelCount, privacy: .public) common_format=\(inputFormat.commonFormat.rawValue, privacy: .public) converter_available=\(converter != nil, privacy: .public)")
 
         do {
+            try FileManager.default.createDirectory(
+                at: audioDirectory,
+                withIntermediateDirectories: true
+            )
             let file = try AVAudioFile(
                 forWriting: outputURL,
                 settings: targetFormat.settings,

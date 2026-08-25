@@ -50,6 +50,27 @@ final class AudioRecorderTests: XCTestCase {
         XCTAssertFalse(recorder.isRecording)
     }
 
+    func test_audioRecorder_writesRecordingInsideConfiguredAudioDirectory() throws {
+        let audioDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("voiceflow-audio-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: audioDirectory) }
+        let recorder = AudioRecorder(
+            engineProvider: TestAudioEngineProvider(),
+            audioDirectory: audioDirectory
+        )
+
+        try recorder.startRecording()
+        let url = try XCTUnwrap(recorder.stopRecording())
+
+        XCTAssertEqual(url.deletingLastPathComponent().standardizedFileURL, audioDirectory.standardizedFileURL)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    func test_audioRecorder_defaultDirectory_isVoiceFlowAudioFolder() {
+        XCTAssertEqual(AudioRecorder.appAudioDirectory.lastPathComponent, "audio")
+        XCTAssertTrue(AudioRecorder.appAudioDirectory.path.contains("dha-aa.voiceflow"))
+    }
+
     func test_audioRecorder_stopRecording_returnsNonNilURLWithAudioData() throws {
         let provider = TestAudioEngineProvider()
         let recorder = AudioRecorder(engineProvider: provider)
