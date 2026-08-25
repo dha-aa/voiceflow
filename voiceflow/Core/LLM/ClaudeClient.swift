@@ -128,11 +128,21 @@ struct ClaudeCommandProcessor {
     }
 
     private func requestedCommand(in text: String) -> AICommand? {
-        guard ClaudeSettings.isEnabled(in: userDefaults) else { return nil }
-        return AICommand.parse(
+        guard ClaudeSettings.isEnabled(in: userDefaults) || AISettings.alwaysUseAI(in: userDefaults) else { return nil }
+        if let explicitCommand = AICommand.parse(
             text,
             prefix: AISettings.commandPrefix(in: userDefaults)
-        )
+        ) {
+            return explicitCommand
+        }
+        guard AISettings.alwaysUseAI(in: userDefaults) else { return nil }
+        let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty else { return nil }
+        return AICommand(prompt: prompt)
+    }
+
+    private func hasCommandInput(_ text: String) -> Bool {
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     func processTranscribedText(
@@ -144,8 +154,8 @@ struct ClaudeCommandProcessor {
             return nil
         }
 
-        // Explicit AI commands always win. Grammar correction must never edit
-        // or reinterpret a command before its provider receives it.
+        // Explicit prefix commands and opt-in Always Use AI commands always win.
+        // Grammar correction must never edit or reinterpret a command first.
         if let _ = requestedCommand(in: text) {
             return try await processIfRequested(
                 text,
@@ -165,12 +175,9 @@ struct ClaudeCommandProcessor {
         targetApp: NSRunningApplication? = nil,
         selectedText: String? = nil
     ) async throws -> String? {
-        guard ClaudeSettings.isEnabled(in: userDefaults),
+        guard (ClaudeSettings.isEnabled(in: userDefaults) || AISettings.alwaysUseAI(in: userDefaults)),
               AISettings.selectedProvider(in: userDefaults) == .claude,
-              let command = AICommand.parse(
-                text,
-                prefix: AISettings.commandPrefix(in: userDefaults)
-              ) else {
+              let command = requestedCommand(in: text) else {
             return nil
         }
         let apiKey = try configuredAPIKey()

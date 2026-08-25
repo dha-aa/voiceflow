@@ -83,7 +83,17 @@ final class GeneralSettingsTests: XCTestCase {
 
         XCTAssertFalse(ClaudeSettings.isEnabled(in: defaults))
         XCTAssertFalse(ClaudeSettings.isGrammarFixEnabled(in: defaults))
+        XCTAssertFalse(AISettings.alwaysUseAI(in: defaults))
         XCTAssertFalse(VoiceFlowSettingsDefaults.playCompletionSound(in: defaults))
+    }
+
+    func test_alwaysUseAI_preferencePersists() {
+        let defaults = UserDefaults(suiteName: "always-ai-persist-\(UUID().uuidString)")!
+
+        XCTAssertFalse(AISettings.alwaysUseAI(in: defaults))
+        defaults.set(true, forKey: AISettings.alwaysUseAIKey)
+
+        XCTAssertTrue(AISettings.alwaysUseAI(in: defaults))
     }
 
     func test_keychainRemove_deletesTheStoredProviderKey() throws {

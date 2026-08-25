@@ -18,10 +18,12 @@ final class TranscriptionCoordinatorTests: XCTestCase {
         )
         let stateManager = AppStateManager()
         stateManager.transition(to: .processing)
+        let isolatedAISettings = UserDefaults(suiteName: "transcription-coordinator-ai-\(UUID().uuidString)")!
         let coordinator = TranscriptionCoordinator(
             stateManager: stateManager,
             engine: engine,
-            processor: TextProcessor()
+            processor: TextProcessor(),
+            claudeProcessor: ClaudeCommandProcessor(userDefaults: isolatedAISettings)
         )
         let callback = expectation(description: "transcription callback")
         var receivedText = ""

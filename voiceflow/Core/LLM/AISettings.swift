@@ -64,6 +64,7 @@ enum AISettings {
     static let commandsEnabledKey = "claudeCommandsEnabled"
     static let grammarFixEnabledKey = "grammarFixEnabled"
     static let commandPrefixKey = "aiCommandPrefix"
+    static let alwaysUseAIKey = "aiAlwaysUseAI"
     static let legacyClaudeModelKey = "claudeModel"
     static let defaultCommandPrefix = "Claude"
     static let defaultClaudeModel = "claude-sonnet-5"
@@ -94,6 +95,10 @@ enum AISettings {
         let stored = defaults.string(forKey: commandPrefixKey)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return stored.isEmpty ? defaultCommandPrefix : stored
+    }
+
+    static func alwaysUseAI(in defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: alwaysUseAIKey) as? Bool ?? false
     }
 
     static func defaultModel(for provider: AIProvider) -> String {

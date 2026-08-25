@@ -219,6 +219,58 @@ final class ClaudeClientTests: XCTestCase {
         XCTAssertTrue(prompt.contains("instruction"))
     }
 
+    func test_commandPromptPrioritizesIntentAndRequestedOutputFormat() {
+        let prompt = AIPromptBuilder.command.lowercased()
+
+        XCTAssertTrue(prompt.contains("intent"))
+        XCTAssertTrue(prompt.contains("format"))
+        XCTAssertTrue(prompt.contains("structured"))
+        XCTAssertTrue(prompt.contains("do not ask"))
+        XCTAssertTrue(prompt.contains("final output"))
+    }
+
+    func test_alwaysUseAIProcessesUnprefixedSpeechAsACommand() async throws {
+        let defaults = UserDefaults(suiteName: "claude-always-ai-\(UUID().uuidString)")!
+        defaults.set(true, forKey: AISettings.alwaysUseAIKey)
+        defaults.set(true, forKey: ClaudeSettings.grammarFixEnabledKey)
+        let client = TestAIProviderClient(response: "1. Buy milk\\n2. Call John\\n3. Finish the report")
+        let processor = ClaudeCommandProcessor(
+            providerClient: client,
+            keyStore: TestClaudeAPIKeyStore(apiKey: "test-key"),
+            userDefaults: defaults
+        )
+
+        XCTAssertEqual(processor.requestedProvider(for: "take a note of three things"), .claude)
+        let result = try await processor.processTranscribedText(
+            "Take a note of three things: first, buy milk. Second, call John. Third, finish the report."
+        )
+
+        XCTAssertEqual(result, "1. Buy milk\\n2. Call John\\n3. Finish the report")
+        XCTAssertEqual(client.request?.mode, .command)
+        XCTAssertEqual(
+            client.request?.text,
+            "Take a note of three things: first, buy milk. Second, call John. Third, finish the report."
+        )
+    }
+
+    func test_alwaysUseAIStillLetsExplicitPrefixWinOverGrammarFix() async throws {
+        let defaults = UserDefaults(suiteName: "claude-always-prefix-\(UUID().uuidString)")!
+        defaults.set(true, forKey: AISettings.commandsEnabledKey)
+        defaults.set(true, forKey: AISettings.alwaysUseAIKey)
+        defaults.set(true, forKey: ClaudeSettings.grammarFixEnabledKey)
+        let client = TestAIProviderClient(response: "answer")
+        let processor = ClaudeCommandProcessor(
+            providerClient: client,
+            keyStore: TestClaudeAPIKeyStore(apiKey: "test-key"),
+            userDefaults: defaults
+        )
+
+        _ = try await processor.processTranscribedText("Claude explain this")
+
+        XCTAssertEqual(client.request?.mode, .command)
+        XCTAssertEqual(client.request?.text, "explain this")
+    }
+
     func test_grammarPromptCorrectsSpeechToTextErrorsWithoutRewriting() {
         let prompt = AIPromptBuilder.grammarFix
 
