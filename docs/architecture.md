@@ -22,7 +22,7 @@ VoiceFlow is a native macOS menu-bar dictation application. The primary workflow
 | State | `voiceflow/Core/State/` | Typed application state and state transitions. |
 | Transcription | `voiceflow/Core/Transcription/` | Engine-neutral speech contracts, WhisperKit lifecycle, FluidAudio/Parakeet lifecycle, model discovery/validation, and text normalization. |
 | LLM | `voiceflow/Core/LLM/` | Provider-neutral AI request contracts, prompt modes, Claude client/catalog, AI settings persistence, and Keychain access boundaries. |
-| Injection | `voiceflow/Core/Injection/` | Focused-application capture, Accessibility insertion, Terminal paste fallback, clipboard fallback, and completion feedback. |
+| Injection | `voiceflow/Core/Injection/` | Captured-target metadata, capability inspection, ordered AX/paste/keyboard strategies, terminal paste fallback, clipboard fallback, and completion feedback. |
 | Permissions | `voiceflow/Core/Permissions/` | Microphone, Accessibility/Input Monitoring, and screen-context permission status and requests. |
 | Logging | `voiceflow/Core/Logging/` | Privacy-safe structured diagnostics. Never log audio, raw transcripts, inserted text, clipboard contents, or secrets. |
 | UI | `voiceflow/UI/` | SwiftUI/AppKit presentation only: menu bar, popover, overlay, onboarding, and Settings. UI observes Core state and invokes Core services; it does not duplicate pipeline decisions. |
@@ -46,7 +46,7 @@ TextProcessor
 ClaudeCommandProcessor / Grammar Fix / local SnippetStore expansion
     ↓
 InjectionCoordinator
-    ├── Accessibility insertion / Terminal paste fallback
+    ├── TextInjector → InjectionContext → ordered AX/paste/keyboard strategies
     └── clipboard fallback when no active text field exists
     ↓
 completion state and optional completion sound

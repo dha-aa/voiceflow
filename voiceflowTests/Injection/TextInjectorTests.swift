@@ -16,6 +16,41 @@ final class TextInjectorTests: XCTestCase {
         XCTAssertFalse(TextInjector.usesFrontmostKeyboardEvents(for: nil))
     }
 
+    func test_injectionStrategies_selectOnlyApplicableRoutes() throws {
+        let targetApp = try XCTUnwrap(
+            NSRunningApplication(processIdentifier: ProcessInfo.processInfo.processIdentifier)
+        )
+        let paster = TestTextPaster()
+        let terminalFrontmostContext = InjectionContext(
+            targetApp: targetApp,
+            processIdentifier: targetApp.processIdentifier,
+            bundleIdentifier: "com.apple.Terminal",
+            isTerminalTarget: true,
+            isFrontmostTarget: true
+        )
+        let terminalBackgroundContext = InjectionContext(
+            targetApp: targetApp,
+            processIdentifier: targetApp.processIdentifier,
+            bundleIdentifier: "com.apple.Terminal",
+            isTerminalTarget: true,
+            isFrontmostTarget: false
+        )
+        let standardFrontmostContext = InjectionContext(
+            targetApp: targetApp,
+            processIdentifier: targetApp.processIdentifier,
+            bundleIdentifier: "com.apple.TextEdit",
+            isTerminalTarget: false,
+            isFrontmostTarget: true
+        )
+
+        XCTAssertTrue(TerminalPasteStrategy(textPaster: paster).canHandle(context: terminalFrontmostContext))
+        XCTAssertFalse(TerminalPasteStrategy(textPaster: paster).canHandle(context: terminalBackgroundContext))
+        XCTAssertTrue(AccessibilityValueStrategy().canHandle(context: standardFrontmostContext))
+        XCTAssertTrue(ClipboardPasteStrategy(textPaster: paster).canHandle(context: standardFrontmostContext))
+        XCTAssertFalse(ClipboardPasteStrategy(textPaster: paster).canHandle(context: terminalFrontmostContext))
+        XCTAssertTrue(KeyboardTypingStrategy(keyboardEventPoster: TestKeyboardEventPoster()).canHandle(context: terminalBackgroundContext))
+    }
+
     func test_textInjector_usesClipboardPasteFallback_onlyForFrontmostNonTerminalTargets() {
         XCTAssertTrue(
             TextInjector.shouldUseClipboardPasteFallback(

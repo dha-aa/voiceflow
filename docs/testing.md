@@ -12,7 +12,7 @@ Testing requires a Mac with macOS 14 or later and the full Xcode installation. T
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 ```
 
-The current automated baseline is **191 XCTest tests with zero failures**. Tests that require microphone, Accessibility, a live WhisperKit model, or another application are supplemented by manual verification rather than being made dependent on a particular user machine.
+The current automated baseline is **192 XCTest tests with zero failures**. Tests that require microphone, Accessibility, a live WhisperKit model, or another application are supplemented by manual verification rather than being made dependent on a particular user machine.
 
 ## Automated XCTest suite
 
@@ -35,7 +35,7 @@ xcodebuild \
 A successful run ends with output similar to:
 
 ```text
-Executed 191 tests, with 0 failures
+Executed 192 tests, with 0 failures
 ** TEST SUCCEEDED **
 ```
 
@@ -87,7 +87,7 @@ xcodebuild \
 | Local speech engines | WhisperKit package import and session-factory behavior; Parakeet/FluidAudio session loading through test doubles; engine routing, persisted selection, model readiness, caching, switching, missing models, and transcription error mapping. |
 | Model management | WhisperKit catalog entries, canonical local paths, direct Hub layout, component validation, nested-folder rejection, download progress, failed-load cleanup, persisted selection, active-model deletion protection, and Parakeet local-cache/platform status. |
 | Text processing | Conservative whitespace and formatting behavior without changing dictated meaning. |
-| Text injection | Empty input, missing target, Accessibility failure, keyboard fallback behavior, Terminal-family paste routing, line-end normalization and clipboard restoration, end-of-text caret placement, capability-based focused-input detection, writable/read-only/disabled classification, native/web/custom role coverage, clipboard fallback, and injector error mapping. |
+| Text injection | Empty input, missing target, Accessibility failure, strategy eligibility and ordering, keyboard fallback behavior, Terminal-family paste routing, line-end normalization and clipboard restoration, end-of-text caret placement, capability-based focused-input detection, writable/read-only/disabled classification, native/web/custom role coverage, clipboard fallback, and injector error mapping. |
 | Injection coordination | Processing/injecting/completed/clipboard-completed transitions, successful completion sound selection, disabled sound behavior, clipboard delivery, and no sound on failures. |
 | Overlay UI | Loading model, Listening, Processing, provider-specific `Using Claude...`/`Using ChatGPT...` labels, Done, Copied to Clipboard, error states, animation cancellation, and approximately 400 ms completion dismissal. |
 | Settings UI | General, AI, Models, Snippets, and About navigation; overlay visibility; completion sound defaults and persistence; audio-retention defaults and persistence; Delete All Audio; model selection; download progress across tabs; model actions; Claude enablement; Grammar Fix toggle; provider/model persistence; custom-prefix persistence; Claude model-list decoding; masked Configured API-key status; Change/Remove controls; and microphone/Accessibility permission recovery. |

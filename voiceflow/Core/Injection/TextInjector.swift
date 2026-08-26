@@ -164,8 +164,7 @@ private struct CGEventPasteCommandPoster: PasteCommandPosting {
 }
 
 final class TextInjector: TextInjecting, FocusedTextSelectionReading, TextInputAvailabilityChecking {
-    private let keyboardEventPoster: KeyboardEventPosting
-    private let textPaster: TextPasting
+    private let strategies: [TextInjectionStrategy]
     private let permissionChecker: () -> Bool
     private let permissionRequester: () -> Void
     private let bundleIdentifierProvider: (NSRunningApplication) -> String?
@@ -190,8 +189,13 @@ final class TextInjector: TextInjecting, FocusedTextSelectionReading, TextInputA
             _ = AXIsProcessTrustedWithOptions(options)
         }
     ) {
-        self.keyboardEventPoster = keyboardEventPoster
-        self.textPaster = textPaster
+        self.strategies = [
+            TerminalPasteStrategy(textPaster: textPaster),
+            AccessibilityValueStrategy(),
+            ClipboardPasteStrategy(textPaster: textPaster),
+            KeyboardTypingStrategy(keyboardEventPoster: keyboardEventPoster),
+            AccessibilityValueStrategy(name: "accessibility_api_recovery")
+        ]
         self.permissionChecker = permissionChecker
         self.permissionRequester = permissionRequester
         self.bundleIdentifierProvider = bundleIdentifierProvider
@@ -210,7 +214,7 @@ final class TextInjector: TextInjecting, FocusedTextSelectionReading, TextInputA
         if Self.usesFrontmostKeyboardEvents(for: targetApp.bundleIdentifier) {
             return true
         }
-        guard let focusedElement = try? focusedElement(in: targetApp) else {
+        guard let focusedElement = try? Self.focusedElement(in: targetApp) else {
             return false
         }
 
@@ -313,7 +317,7 @@ final class TextInjector: TextInjecting, FocusedTextSelectionReading, TextInputA
             throw TextInjectionError.accessibilityPermissionDenied
         }
 
-        let focusedElement = try focusedElement(in: targetApp)
+        let focusedElement = try Self.focusedElement(in: targetApp)
         var selectedValue: CFTypeRef?
         let result = AXUIElementCopyAttributeValue(
             focusedElement,
@@ -340,7 +344,7 @@ final class TextInjector: TextInjecting, FocusedTextSelectionReading, TextInputA
             return nil
         }
 
-        let range = try selectedTextRange(
+        let range = try Self.selectedTextRange(
             in: focusedElement,
             textLength: (currentText as NSString).length
         )
@@ -414,71 +418,46 @@ final class TextInjector: TextInjecting, FocusedTextSelectionReading, TextInputA
             throw TextInjectionError.accessibilityPermissionDenied
         }
 
-        let isTerminalTarget = Self.usesFrontmostKeyboardEvents(for: bundleIdentifierProvider(targetApp))
-        let isFrontmostTarget = frontmostApplicationProvider(targetApp)
-        if isTerminalTarget && isFrontmostTarget {
+        let bundleIdentifier = bundleIdentifierProvider(targetApp)
+        let context = InjectionContext(
+            targetApp: targetApp,
+            processIdentifier: processIdentifier,
+            bundleIdentifier: bundleIdentifier,
+            isTerminalTarget: Self.usesFrontmostKeyboardEvents(for: bundleIdentifier),
+            isFrontmostTarget: frontmostApplicationProvider(targetApp)
+        )
+        var lastError: Error?
+
+        for strategy in strategies {
+            guard strategy.canHandle(context: context) else {
+                continue
+            }
+
             do {
-                try textPaster.paste(text: text, moveCaretToEndOfLine: true)
-                VoiceFlowLog.pipeline.info("text_injection_method_succeeded method=terminal_paste")
+                try strategy.inject(text: text, context: context)
+                VoiceFlowLog.pipeline.info("text_injection_method_succeeded method=\(strategy.name, privacy: .public)")
                 return
             } catch {
-                VoiceFlowLog.pipeline.error("text_injection_method_failed method=terminal_paste error=\(String(describing: error), privacy: .public)")
+                lastError = error
+                VoiceFlowLog.pipeline.error("text_injection_method_failed method=\(strategy.name, privacy: .public) error=\(String(describing: error), privacy: .public)")
             }
         }
 
-        if accessibilityTrusted {
-            do {
-                try injectUsingAccessibilityAPI(text: text, into: targetApp)
-                VoiceFlowLog.pipeline.info("text_injection_method_succeeded method=accessibility_api")
-                return
-            } catch {
-                VoiceFlowLog.pipeline.error("text_injection_method_failed method=accessibility_api error=\(String(describing: error), privacy: .public)")
+        if let lastError {
+            if let injectionError = lastError as? TextInjectionError {
+                throw injectionError
             }
+            throw TextInjectionError.injectionFailed(underlying: lastError)
         }
 
-        if Self.shouldUseClipboardPasteFallback(
-            isTerminalTarget: isTerminalTarget,
-            isFrontmostTarget: isFrontmostTarget
-        ) {
-            do {
-                try textPaster.paste(text: text, moveCaretToEndOfLine: false)
-                VoiceFlowLog.pipeline.info("text_injection_method_succeeded method=clipboard_paste_fallback")
-                return
-            } catch {
-                VoiceFlowLog.pipeline.error("text_injection_method_failed method=clipboard_paste_fallback error=\(String(describing: error), privacy: .public)")
-            }
-        }
-
-        do {
-            let useFrontmostSession = isTerminalTarget && isFrontmostTarget
-            try keyboardEventPoster.post(
-                text: text,
-                to: processIdentifier,
-                preferFrontmostSession: useFrontmostSession
-            )
-            VoiceFlowLog.pipeline.info("text_injection_method_succeeded method=keyboard_events frontmost_session=\(useFrontmostSession, privacy: .public)")
-        } catch {
-            do {
-                try injectUsingAccessibilityAPI(text: text, into: targetApp)
-                VoiceFlowLog.pipeline.info("text_injection_method_succeeded method=accessibility_api_fallback")
-            } catch let fallbackError as TextInjectionError {
-                throw fallbackError
-            } catch {
-                throw TextInjectionError.injectionFailed(underlying: error)
-            }
-        }
+        throw TextInjectionError.injectionFailed(underlying: StrategyError.noApplicableStrategy)
     }
 
-    private func injectUsingAccessibilityAPI(
+    static func injectUsingAccessibilityAPI(
         text: String,
         into targetApp: NSRunningApplication
     ) throws {
-        guard isAccessibilityPermissionGranted else {
-            requestAccessibilityPermission()
-            throw TextInjectionError.accessibilityPermissionDenied
-        }
-
-        let focusedElement = try focusedElement(in: targetApp)
+        let focusedElement = try Self.focusedElement(in: targetApp)
         var currentValue: CFTypeRef?
         let valueResult = AXUIElementCopyAttributeValue(
             focusedElement,
@@ -522,7 +501,7 @@ final class TextInjector: TextInjecting, FocusedTextSelectionReading, TextInputA
         }
     }
 
-    private func focusedElement(in targetApp: NSRunningApplication) throws -> AXUIElement {
+    fileprivate static func focusedElement(in targetApp: NSRunningApplication) throws -> AXUIElement {
         let applicationElement = AXUIElementCreateApplication(targetApp.processIdentifier)
         var focusedValue: CFTypeRef?
         let focusedResult = AXUIElementCopyAttributeValue(
@@ -536,7 +515,7 @@ final class TextInjector: TextInjecting, FocusedTextSelectionReading, TextInputA
         return focusedValue as! AXUIElement
     }
 
-    private func selectedTextRange(
+    private static func selectedTextRange(
         in focusedElement: AXUIElement,
         textLength: Int
     ) throws -> NSRange {

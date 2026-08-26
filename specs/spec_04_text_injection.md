@@ -35,8 +35,11 @@ The overlay, Settings window, model manager, and provider-specific AI processing
 
 | Component | Location | Current contract |
 |---|---|---|
-| `TextInjector` | `voiceflow/Core/Injection/TextInjector.swift` | Validates text, target, and Accessibility trust; detects focused text input; performs AX, paste, or keyboard delivery. |
-| `TextInjecting` | Same file | Injectable protocol used by `InjectionCoordinator` and tests. |
+| `TextInjector` | `voiceflow/Core/Injection/TextInjector.swift` | Validates text, target, and Accessibility trust; captures one target context; orchestrates ordered injection strategies. |
+| `InjectionContext` | `voiceflow/Core/Injection/InjectionStrategy.swift` | Immutable per-attempt target metadata: application, process identifier, bundle identifier, terminal classification, and frontmost status. |
+| `TextInjectionStrategy` | Same file | Small strategy contract used by the injector’s ordered route list. |
+| `TerminalPasteStrategy`, `AccessibilityValueStrategy`, `ClipboardPasteStrategy`, `KeyboardTypingStrategy` | `voiceflow/Core/Injection/InjectionStrategies.swift` | Terminal-specific paste, AX value replacement, frontmost normal paste, and process-targeted Unicode keyboard delivery. |
+| `TextInjecting` | `TextInjector.swift` | Injectable protocol used by `InjectionCoordinator` and tests. |
 | `TextInputAvailabilityChecking` | Same file | Allows the coordinator to decide whether to inject or copy to the clipboard. |
 | `FocusedTextSelectionReading` | Same file | Reads selected text for selection-aware AI requests. |
 | `KeyboardEventPosting` | Same file | Injectable Unicode CGEvent posting seam. |
@@ -67,7 +70,17 @@ Detection is intentionally capability-based rather than a hard-coded application
 
 ## 5. Injection route order
 
-After validation and permission checks, `inject(text:into:)` uses this routing policy.
+After validation and permission checks, `inject(text:into:)` creates one `InjectionContext` and runs the ordered strategy list. Each strategy receives the same captured target metadata, may decline when its capability conditions do not apply, and may throw so the next eligible strategy can be attempted.
+
+The production order is:
+
+1. `TerminalPasteStrategy` for a frontmost terminal-family target.
+2. `AccessibilityValueStrategy` for AX value replacement.
+3. `ClipboardPasteStrategy` for a frontmost non-terminal target.
+4. `KeyboardTypingStrategy` for captured-process Unicode events.
+5. A second `AccessibilityValueStrategy` recovery attempt after keyboard failure.
+
+This is strategy-based orchestration, not an application-specific allowlist. It preserves the existing target-safety and permission gates around every route.
 
 ### 5.1 Terminal-family targets
 
@@ -222,7 +235,7 @@ AX behavior varies across macOS applications. Some controls expose a role but re
 
 A process-targeted keyboard event is safer than a global paste when the original target is no longer frontmost, but the target application may ignore events while unfocused. If a target closes or its process identifier becomes invalid, no replacement target is selected and output may be reported as an error or copied only when the coordinator had already classified the target as unsupported.
 
-The historical terminal-only abstraction was generalized to `TextPasting`/`SystemTextPaster` so the same clipboard-preserving mechanism can be used for a frontmost non-terminal fallback. Historical `spec_changes/028` and `029` retain their original names as historical records; they are not current API references.
+The historical terminal-only abstraction was generalized to `TextPasting`/`SystemTextPaster` so the same clipboard-preserving mechanism can be used for a frontmost non-terminal fallback. The current route orchestration is split into `InjectionContext` and small `TextInjectionStrategy` implementations, while `AppStateManager` remains the single source of truth for visible pipeline states. Historical `spec_changes/028` and `029` retain their original names as historical records; they are not current API references.
 
 ## Handoff to Specification 05
 
