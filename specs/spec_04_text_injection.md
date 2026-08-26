@@ -1,99 +1,157 @@
-# SPEC 04 — Accessibility-Safe Text Injection and Core Pipeline Completion
+# SPEC 04 — Accessibility-Safe Text Injection and Output Delivery
 
 ## Status and dependency
 
-Specification 04 consumes the final processed text—either locally normalized text or the response from an explicitly requested Claude command—and the captured target application from Specification 03, then completes the core VoiceFlow pipeline. The current pipeline is:
+Specification 04 consumes the final processed text and the application captured when the Fn gesture began. It completes the output side of the VoiceFlow pipeline:
 
 ```text
-Fn hold → permission/model readiness → record → process → transcribe → inject → completed → idle
+Fn hold → permission/model readiness → record → transcribe/process → output delivery → completed/copied → idle
 ```
 
-This document is the source of truth for the actual text injection and completion behavior. It does not describe a generic “type anywhere without permission” implementation: the current application requires Accessibility trust before injection begins because it first uses the macOS Accessibility API and only then falls back to keyboard events.
+Specification 03 owns transcription and the `onTranscriptionComplete` handoff. `RecordingCoordinator` owns target capture at Fn-down. Specification 04 must use that captured target and must never silently substitute whichever application is frontmost later.
+
+This document is the source of truth for the current implementation. It describes the broad set of macOS text controls that VoiceFlow attempts to support, but it does **not** promise universal compatibility. Actual behavior depends on the target application's Accessibility implementation, paste handling, event acceptance, permissions, and whether the original target remains valid.
 
 ## 1. Goals
 
 This stage must:
 
-- Reject empty text and missing/invalid target applications safely.
-- Require and request macOS Accessibility permission before cross-process injection.
-- Insert text into the focused element of the application captured at Fn-down.
-- Preserve and replace the selected range where the target Accessibility API supports it.
-- Fall back to Unicode keyboard events when the Accessibility value-update path fails.
-- Map injection failures to user-visible shared errors.
-- Play an optional short completion sound only after successful injection.
-- Expose the explicit `.completed` state for the overlay and menu bar.
-- Return to `.idle` after approximately 400 ms while remaining safe if a new state arrives first.
-- Prove the full core pipeline without depending on the overlay or Settings UI.
+- Reject empty output and missing or invalid target applications safely.
+- Require explicit macOS Accessibility trust before cross-process output delivery.
+- Prefer the least invasive supported route for the target control.
+- Replace the focused selection when the target exposes a writable Accessibility value and selection range.
+- Preserve the existing clipboard whenever VoiceFlow uses temporary clipboard-based paste.
+- Support native text fields and areas, search fields, combo boxes, web-backed editable controls that expose suitable Accessibility attributes, and terminal-family applications through their respective routes.
+- Fall back conservatively when the preferred route is unavailable, without directing global paste to a different application.
+- Copy the final output to the clipboard when no supported focused text input is available.
+- Map failures to shared application states and never report success before output delivery completes.
+- Play the optional completion sound only after successful injection or clipboard delivery.
+- Expose `.completed` or `.copiedToClipboard` long enough for the overlay, then return to `.idle` without overriding a newer interaction or error.
+- Keep output text, clipboard contents, audio, and transcription content out of logs.
 
-The overlay, Settings window, and model-management UI are later presentation layers. They must not be required for the core injection gate to pass.
+The overlay, Settings window, model manager, and provider-specific AI processing are consumers of this output contract; none is required for the `TextInjector` unit tests.
 
 ## 2. Components and contracts
 
 | Component | Location | Current contract |
 |---|---|---|
-| `TextInjector` | `voiceflow/Core/Injection/TextInjector.swift` | Validates target/text/permission and performs AX or keyboard injection |
-| `TextInjecting` | Same file | Injectable protocol used by tests and `InjectionCoordinator` |
-| `KeyboardEventPosting` | Same file | Injectable keyboard-event seam |
-| `InjectionCoordinator` | `voiceflow/Core/Injection/InjectionCoordinator.swift` | State gate, injection call, completion sound, `.completed` timing, and error mapping |
-| `CompletionSoundEffect` | Same file | `tink`, `pop`, and `glass` selectable effects |
-| `CompletionSoundPlaying` | Same file | Injectable completion-sound seam |
+| `TextInjector` | `voiceflow/Core/Injection/TextInjector.swift` | Validates text, target, and Accessibility trust; detects focused text input; performs AX, paste, or keyboard delivery. |
+| `TextInjecting` | Same file | Injectable protocol used by `InjectionCoordinator` and tests. |
+| `TextInputAvailabilityChecking` | Same file | Allows the coordinator to decide whether to inject or copy to the clipboard. |
+| `FocusedTextSelectionReading` | Same file | Reads selected text for selection-aware AI requests. |
+| `KeyboardEventPosting` | Same file | Injectable Unicode CGEvent posting seam. |
+| `TextPasting` | Same file | Injectable temporary-clipboard paste seam with optional terminal caret normalization. |
+| `SystemTextPaster` | Same file | Snapshots/restores the pasteboard, posts Command-V, and optionally posts Control-E. |
+| `SystemClipboardWriter` | Same file | Writes output to the general pasteboard for clipboard delivery. |
+| `InjectionCoordinator` | `voiceflow/Core/Injection/InjectionCoordinator.swift` | Decides injection versus clipboard delivery, maps errors, plays success-only sound, and owns completion-state timing. |
 
-`TranscriptionCoordinator.onTranscriptionComplete` provides:
+`TranscriptionCoordinator.onTranscriptionComplete` provides `(String, NSRunningApplication?)`. The injection coordinator consumes this callback and does not rediscover the frontmost application. A Claude or other provider response is treated like any other final output after provider processing has completed.
 
-```swift
-(String, NSRunningApplication?)
+## 3. Accessibility permission and captured-target safety
+
+`TextInjector` checks `AXIsProcessTrusted()` before performing any cross-process output operation. If trust is absent, it calls the injected permission requester, whose production implementation invokes `AXIsProcessTrustedWithOptions` with the system prompt option, then throws `.accessibilityPermissionDenied`. The user must explicitly enable VoiceFlow under **System Settings → Privacy & Security → Accessibility**. The injector does not silently bypass this requirement.
+
+The target application is the `NSRunningApplication` captured at Fn-down. A `nil` target or non-positive process identifier throws `.targetApplicationUnavailable`. For operations that send a global Command-V, `TextInjector` separately verifies that the captured target is still the frontmost application by comparing process identifiers through `frontmostApplicationProvider`.
+
+This frontmost check protects against a common race: the user starts recording in one application and changes focus before transcription completes. VoiceFlow never sends a global paste to the new frontmost application. If the original target is no longer frontmost, the global paste route is skipped. A process-targeted keyboard fallback may still be attempted for the captured process; whether that application accepts those events is target-specific.
+
+## 4. Focused text-input detection
+
+`hasTextInput(in:)` is used by `InjectionCoordinator` before it chooses between injection and clipboard delivery. It returns `false` when the target is invalid or Accessibility trust is absent.
+
+Terminal-family applications are treated as supported text-input targets because their shell prompt is not consistently represented as a writable AX text field. For other applications, VoiceFlow obtains the focused AX element and checks, in order:
+
+1. Whether its role is `AXTextField`, `AXTextArea`, `AXSearchField`, `AXComboBox`, or `AXWebArea`.
+2. Otherwise, whether it exposes a string `kAXValueAttribute` and reports that attribute as settable.
+3. If settable status cannot be queried, whether it exposes `kAXSelectedTextRangeAttribute` alongside the string value.
+
+An explicit non-settable value is treated as read-only. A control that exposes none of these signals is not considered a supported text input by the coordinator. In that case, the final text is copied to the clipboard rather than being sent to an unrelated or unsupported target.
+
+Detection is intentionally capability-based rather than a hard-coded application allowlist. TextEdit, native AppKit text controls, browser editors, Electron/editor controls, and other applications are supported when they expose compatible AX attributes or accept the later fallback route. A particular browser, editor, custom control, or terminal version may still reject one or more routes.
+
+## 5. Injection route order
+
+After validation and permission checks, `inject(text:into:)` uses this routing policy.
+
+### 5.1 Terminal-family targets
+
+The following bundle identifiers are classified as terminal-family targets:
+
+- `com.apple.Terminal`
+- `com.googlecode.iterm2`
+- `io.alacritty`
+- `com.mitchellh.ghostty`
+- `net.kovidgoyal.kitty`
+- `org.wezfurlong.wezterm`
+
+If the captured terminal remains frontmost, VoiceFlow uses `SystemTextPaster` with `moveCaretToEndOfLine: true`. The route is:
+
+```text
+snapshot clipboard → write temporary output → Command-V → Control-E → restore clipboard
 ```
 
-The injection coordinator consumes that callback and does not rediscover the frontmost application. It treats a Claude-generated response the same as locally processed text; provider routing is complete before this handoff. Target capture remains the responsibility of `RecordingCoordinator`.
+Control-E is terminal-only and is not used for ordinary text controls. VoiceFlow does not press Enter. The pasteboard snapshot is restored after the paste and caret command, including when a command fails.
 
-## 3. TextInjector behavior
+If the captured terminal is no longer frontmost, VoiceFlow skips global paste and proceeds through the non-global fallback sequence. In the final keyboard route, the production poster sends Unicode events to the captured process identifier rather than posting a global paste command.
 
-`TextInjector` validates the input in this order:
+### 5.2 Standard and web-backed text controls
 
-1. Empty text throws `.emptyText`.
-2. A `nil` target or invalid process identifier throws `.targetApplicationUnavailable`.
-3. Accessibility trust is checked with `AXIsProcessTrusted()`.
-4. If trust is missing, the injector invokes its permission requester, which uses `AXIsProcessTrustedWithOptions` with the system prompt option, then throws `.accessibilityPermissionDenied`.
+For a frontmost non-terminal target, VoiceFlow first attempts Accessibility value replacement. It obtains the focused UI element, reads its string AX value, obtains the selected UTF-16 range when available, replaces that range, and attempts to set the caret immediately after the replacement. If no valid selected range is available, the insertion point defaults to the end of the existing value.
 
-The user must enable VoiceFlow under **System Settings → Privacy & Security → Accessibility**. The injector does not guess a replacement target and does not silently discard text.
+If AX value replacement fails, VoiceFlow attempts a normal clipboard paste while the captured target is still frontmost:
 
-When trusted, the injector first attempts the Accessibility path. It creates an application AX element for the target process, reads `kAXFocusedUIElementAttribute`, reads the focused element’s `kAXValueAttribute`, obtains `kAXSelectedTextRangeAttribute` when available, and replaces the selected range with the provided text. If a selected range is unavailable, it uses a caret at the end of the existing value. After updating the value, it attempts to restore the caret immediately after the inserted text.
+```text
+snapshot clipboard → write temporary output → Command-V → restore clipboard
+```
 
-If the Accessibility path fails despite trust, the injector falls back to `KeyboardEventPosting`. The production poster creates Unicode `CGEvent` key-down/key-up pairs and posts text in chunks of 20 Swift characters to the target process identifier. If keyboard posting fails, it makes one additional Accessibility attempt and propagates a categorized injection failure if that also fails.
+This route is intended to cover controls such as web-backed editors and custom/native controls that reject direct `kAXValueAttribute` mutation but honor ordinary paste. It has no terminal Control-E step.
 
-The current injector logs only process ID, target bundle identifier, permission status, method, and error category. It never logs the text being inserted.
+If the frontmost paste route fails or is not eligible, VoiceFlow posts Unicode keyboard events to the captured process identifier. The production poster sends text in chunks of 20 Swift characters. This route is not guaranteed to work in every application because some applications reject synthetic events, use custom editors, or require a different input mechanism.
 
-### Architectural note
+For a non-frontmost non-terminal target, VoiceFlow never sends a global Command-V. It may use the captured process-targeted keyboard fallback after AX failure. This preserves captured-target safety while acknowledging that the target application may not accept events while unfocused.
 
-The historical specification described keyboard events as the primary method and implied that Accessibility permission was optional. That is not the current behavior. Accessibility trust is required up front; AX value replacement is primary, and keyboard events are a fallback for a trusted target when AX update fails. This difference is intentional and must not be “fixed” by silently bypassing the permission gate.
+### 5.3 Retry behavior
 
-## 4. InjectionCoordinator behavior
+If the keyboard poster fails, VoiceFlow makes one additional Accessibility value-replacement attempt. A categorized `TextInjectionError` is propagated if that retry also fails. Failures are logged as method and category metadata only; the output text is never logged.
 
-`InjectionCoordinator.inject(text:targetApp:)` runs only when `AppStateManager.currentState == .injecting`. Calls in any other state are ignored and do not invoke the injector.
+## 6. Clipboard preservation and no-target delivery
 
-On successful injection, the coordinator:
+`SystemTextPaster` snapshots all pasteboard item data and restores it after temporary paste. The restore occurs on both the success and error paths. Its normal `paste(text:)` operation does not send Control-E; terminal callers explicitly request `paste(text:moveCaretToEndOfLine: true)`.
 
-1. Logs content-free success metadata.
-2. Reads `playCompletionSound` from `UserDefaults`, defaulting to `false`.
-3. If enabled, reads `completionSoundEffect`, defaults invalid values to `.tink`, and plays the selected native `NSSound` effect at a subtle volume.
-4. Transitions to `.completed`.
+`InjectionCoordinator` copies output directly to the general clipboard instead of calling `TextInjector` when:
+
+- There is no captured target application; or
+- Accessibility is trusted, a target exists, and `TextInputAvailabilityChecking.hasTextInput(in:)` returns `false`.
+
+This is a successful output mode, represented by `.copiedToClipboard`, and the overlay reports **Copied to Clipboard**. It is not a false text-injection success. The user can paste the result manually with `⌘ + V`.
+
+If a target exists but Accessibility trust is missing, the coordinator does not use the no-input shortcut; it calls `TextInjector`, which requests permission and reports `.accessibilityPermissionDenied`. This preserves the explicit permission contract.
+
+## 7. InjectionCoordinator behavior
+
+`InjectionCoordinator.inject(text:targetApp:)` runs only while `AppStateManager.currentState == .injecting`. Calls in another state are ignored.
+
+On successful injection or clipboard delivery, it:
+
+1. Logs content-free output metadata.
+2. Reads the persisted `playCompletionSound` setting, defaulting to `false`.
+3. If enabled, reads `completionSoundEffect`, uses `.tink` for invalid values, and plays the selected native `NSSound` effect at subtle volume.
+4. Transitions to `.completed` after injection or `.copiedToClipboard` after clipboard delivery.
 5. Waits approximately 400 ms.
-6. Transitions to `.idle` only if the state is still `.completed`; a newer interaction or error wins.
+6. Returns to `.idle` only if the state is still the same completion state; a newer interaction or error wins.
 
-The available persisted sound values are `Tink`, `Pop`, and `Glass`. The sound is never played when transcription fails, text is empty, permission is denied, the target is unavailable, or injection fails.
+Available persisted sound values are `Tink`, `Pop`, and `Glass`. The sound is never played for empty output, transcription failure, permission denial, target failure, injection failure, or clipboard-write failure.
 
-Injection errors map as follows:
-
-| Injector result | Shared application state |
+| Output result | Shared application state |
 |---|---|
-| `.accessibilityPermissionDenied` | `.error(.accessibilityPermissionDenied)` |
-| `.emptyText`, missing target, AX failure, keyboard failure, other errors | `.error(.injectionFailed)` |
+| Successful text injection | `.completed`, then `.idle` |
+| Successful no-target/no-input clipboard copy | `.copiedToClipboard`, then `.idle` |
+| Missing Accessibility permission | `.error(.accessibilityPermissionDenied)` |
+| Empty text, invalid target, AX failure, paste failure, keyboard failure, or clipboard failure | `.error(.injectionFailed)` |
 
-The shared state manager later recovers errors to `.idle` after its normal two-second delay.
+## 8. Core pipeline wiring
 
-## 5. Full core pipeline wiring
-
-The AppDelegate retains the coordinators and connects them with main-actor tasks:
+The application composition connects the stages with main-actor tasks:
 
 ```text
 RecordingCoordinator.onRecordingComplete
@@ -102,68 +160,77 @@ RecordingCoordinator.onRecordingComplete
   → InjectionCoordinator.inject(text:targetApp:)
 ```
 
-The core stages own these state transitions:
+The output stage participates in the state sequence:
 
 ```text
-preparingModel → recording → processing → injecting → completed → idle
+preparingModel → recording → processing → injecting → completed/copiedToClipboard → idle
 ```
 
-The overlay may later render `.injecting` as “Processing…” and `.completed` as “Done!”, but this stage must be tested independently of that UI.
+The overlay may render `.injecting` as “Processing…”, `.completed` as “Done!”, and `.copiedToClipboard` as “Copied to Clipboard”. Presentation wording must not change the underlying delivery or safety rules.
 
-## 6. Testing requirements
+## 9. Privacy, logging, and permissions
 
-The current executable tests are:
+The injection implementation may log process identifier, target bundle identifier, permission status, selected route, character count, and error category. It must not log dictated text, selected text, AI prompts or responses, audio data, or clipboard contents. Temporary clipboard data is held only for the paste operation and then the prior pasteboard items are restored.
+
+Microphone permission is owned by the recording stage. Accessibility permission is required for this output stage. Input Monitoring or related system approval may also be required by macOS for synthetic keyboard events or global monitoring. Missing permissions must lead to actionable UI guidance and a recoverable idle/error state.
+
+## 10. Automated testing requirements
 
 | Test file | Required coverage |
 |---|---|
-| `voiceflowTests/Injection/TextInjectorTests.swift` | Full keyboard poster forwarding, empty text rejection, nil target rejection, Accessibility permission prompt/denial, and poster failure propagation |
-| `voiceflowTests/Injection/InjectionCoordinatorTests.swift` | Injecting-state gate, success state sequence, selected completion sound, no sound on failures, generic failure, and accessibility-specific error |
-| `voiceflowTests/Transcription/TranscriptionPipelineIntegrationTests.swift` | Processed text reaching the injection callback from the transcription coordinator |
+| `voiceflowTests/Injection/TextInjectorTests.swift` | Terminal-family classification; frontmost-only clipboard fallback; terminal end-of-line intent; non-frontmost terminal process-targeted fallback; clipboard restoration; AX selection/caret helpers; empty/nil target handling; permission denial; keyboard fallback/error behavior. |
+| `voiceflowTests/Injection/InjectionCoordinatorTests.swift` | Injecting-state gate; injection success; clipboard delivery; completion states; sound selection; no sound on failures; generic and Accessibility-specific error mapping. |
+| `voiceflowTests/Transcription/TranscriptionPipelineIntegrationTests.swift` | Final processed text and captured target reaching the injection callback. |
 
-Unit tests must use injected permission checkers/requesters, keyboard posters, text injectors, and completion-sound players. They must not post real keyboard events or write real dictated content to logs.
+Unit tests must inject permission checkers/requesters, target bundle/frontmost providers, keyboard posters, text pasters, text injectors, clipboard writers, and sound players. They must not post real keyboard events or write real dictated content to logs.
 
-The core integration verification should use a controlled WAV fixture, a test session factory, a test injector, and a test target where possible. A real TextEdit verification is a manual test because it depends on macOS Accessibility permission and the user’s focused application.
+The automated suite cannot prove that every application accepts AX mutation, Command-V, or synthetic Unicode events. Application-specific behavior requires manual verification with disposable text and no sensitive data.
 
-Manual verification:
+## 11. Manual verification matrix
 
-1. Grant VoiceFlow microphone and Accessibility permissions.
-2. Focus a TextEdit document or another known editable field.
-3. Hold Fn, speak a short sentence, and release Fn.
-4. Confirm the text appears in the original focused field without manual paste.
-5. Confirm the state sequence reaches `.processing`, `.injecting`, `.completed`, and then `.idle`.
-6. Enable the completion sound and repeat; confirm one subtle sound plays only after text appears.
-7. Disable Accessibility and repeat; confirm the app requests permission and reports an accessibility error without claiming success.
-8. Repeat with a missing or closed target and confirm no alternate application receives text.
+Use a fresh unsigned or Debug build, grant the required permissions, and use the same build throughout the session. Use a disposable phrase such as “The quick brown fox jumps over the lazy dog.”
 
-## 7. Acceptance criteria
+| Scenario | Procedure | Expected result |
+|---|---|---|
+| Native field | Focus TextEdit or another native editable field, optionally select text, then dictate. | AX replacement reaches the selected range or caret, the caret is after the inserted text, and the prior clipboard remains intact. |
+| Browser editor | Test a disposable `contenteditable` or textarea in Safari, Chrome, or Firefox. | If AX mutation is rejected, a frontmost paste fallback may deliver the text; the clipboard is restored. Record the exact browser/editor result rather than generalizing it to all web apps. |
+| Electron/editor control | Test a disposable editable control in an Electron or code editor application. | AX, frontmost paste, or keyboard fallback may succeed depending on the control; no other application receives a global paste. Record unsupported cases. |
+| Terminal-family | Focus Terminal, iTerm2, Alacritty, Ghostty, Kitty, or WezTerm; preserve a harmless clipboard value; dictate a short command without pressing Enter. | Frontmost terminal paste inserts the output, Control-E places the caret at line end, no Enter is sent, and the previous clipboard is restored. |
+| Captured target changes | Start in one application, hold Fn, switch applications or close the target before output completes. | The new frontmost application does not receive global Command-V. The original process-targeted fallback may be attempted or the operation may report an error. |
+| Read-only/no input | Focus a read-only control or leave no supported text input active. | The coordinator copies the final text to the clipboard and shows **Copied to Clipboard**, or reports a clipboard error; it does not claim text was injected. |
+| Missing permission | Revoke Accessibility permission and repeat. | VoiceFlow requests/guides permission, reports an Accessibility error, and does not claim success. |
+| Completion | Enable the completion sound and repeat successful injection and clipboard delivery. | The selected Tink, Pop, or Glass sound plays only after successful output; `.completed` or `.copiedToClipboard` is visible briefly before idle. |
 
-- Empty text is rejected before any event or AX operation.
-- `nil` and invalid target applications are rejected without target guessing.
-- Accessibility trust is required before injection and a system permission prompt is requested when absent.
-- The captured target application is used; the current frontmost application is not substituted later.
-- Trusted targets use AX focused-element value replacement first.
-- AX injection preserves selection replacement and attempts to restore the caret.
-- Trusted AX failure falls back to Unicode keyboard events in 20-character chunks.
-- Injection failures map to `.error(.injectionFailed)`, except missing Accessibility trust maps to `.error(.accessibilityPermissionDenied)`.
-- Successful injection transitions to `.completed` and then `.idle` after approximately 400 ms, unless a newer state supersedes it.
-- Completion sound is disabled by default, uses Tink/Pop/Glass, and plays only after successful injection.
-- The core pipeline works without the overlay or Settings window.
-- All injection and core-pipeline tests pass.
-- Audio, spoken text, transcribed text, Claude prompts/responses, and injected text never appear in logs.
+## 12. Acceptance criteria
 
-## 8. Core Pipeline Verification Gate
+- Empty output is rejected before AX, pasteboard, or keyboard operations.
+- A `nil` or invalid target is rejected without guessing a replacement application.
+- Accessibility trust is required and the system permission request is used when trust is absent.
+- The target captured at Fn-down is used; the current frontmost application is never substituted.
+- Terminal-family frontmost targets use temporary Command-V plus Control-E, restore the clipboard, and never receive automatic Enter.
+- Standard and web-backed targets use AX value replacement first, then frontmost-only clipboard paste, then captured-process Unicode keyboard events when appropriate.
+- Non-frontmost targets never receive a global paste command.
+- AX selection replacement preserves the intended UTF-16 range and attempts to place the caret after the inserted text.
+- Normal non-terminal paste never posts Control-E.
+- No supported focused text input results in clipboard delivery, not false injection success.
+- Clipboard contents are restored after temporary paste, including paste errors.
+- Output failures map to `.error(.injectionFailed)`, except missing Accessibility trust, which maps to `.error(.accessibilityPermissionDenied)`.
+- Successful injection and clipboard delivery produce their corresponding completion state and return to idle after approximately 400 ms unless superseded.
+- Completion sound is disabled by default and plays only after successful output.
+- Automated injection tests pass, and any manual application claims are limited to applications actually tested.
+- Audio, spoken text, selected text, AI prompts/responses, injected text, and clipboard contents never appear in logs.
 
-Specification 04 is complete only when a controlled test and a real manual TextEdit test prove:
+## 13. Known limitations and inconsistency register
 
-```text
-Fn held → audio captured → transcription processed → target text injected → completed → idle
-```
+AX behavior varies across macOS applications. Some controls expose a role but reject value mutation; some expose no usable AX value; some accept paste but reject synthetic keyboard events; and some custom editors do not expose enough state to support selection replacement. VoiceFlow therefore uses capability checks and layered fallbacks rather than claiming universal injection.
 
-The user must not need to copy/paste manually, and an injection failure must be visible as an error rather than a false completion. Only after this gate passes should Specification 05 add visual feedback.
+A process-targeted keyboard event is safer than a global paste when the original target is no longer frontmost, but the target application may ignore events while unfocused. If a target closes or its process identifier becomes invalid, no replacement target is selected and output may be reported as an error or copied only when the coordinator had already classified the target as unsupported.
 
-## 9. Handoff to Specification 05
+The historical terminal-only abstraction was generalized to `TextPasting`/`SystemTextPaster` so the same clipboard-preserving mechanism can be used for a frontmost non-terminal fallback. Historical `spec_changes/028` and `029` retain their original names as historical records; they are not current API references.
 
-Specification 05 may observe `AppStateManager`, `AudioRecorder.audioLevel`, and the injection completion states. It must not change the core coordinator sequencing, permission gate, target capture, or success-only completion sound behavior.
+## Handoff to Specification 05
+
+Specification 05 may observe `AppStateManager`, `AudioRecorder.audioLevel`, `.completed`, and `.copiedToClipboard`. It must not change the Accessibility permission gate, captured-target rule, output route order, clipboard restoration, terminal Control-E behavior, no-Enter rule, or success-only completion sound contract.
 
 ## References
 
@@ -176,10 +243,10 @@ Specification 05 may observe `AppStateManager`, `AudioRecorder.audioLevel`, and 
 [7]: https://developer.apple.com/documentation/applicationservices/axisprocesstrusted "Apple Accessibility trust API"
 [8]: ../voiceflow/Core/LLM/ClaudeClient.swift "Claude BYOK client and command processor"
 
-## Implementation inconsistency register
-
-The old specification required direct return to `.idle` and omitted the `.completed` state and completion sound. The current implementation intentionally inserts `.completed` for about 400 ms and supports optional Tink/Pop/Glass feedback. The old keyboard-first, permission-optional approach is also superseded by the current Accessibility-first, permission-required implementation.
-
 ## Completion gate
 
-Do not begin Specification 05 until unit tests pass, a controlled end-to-end test reaches the injection callback, and real TextEdit verification confirms that Accessibility-safe injection works without stealing or changing the target focus unexpectedly.
+Specification 04 is complete for this change when the focused injection tests, the broader suite, and a clean build pass. Manual application compatibility must be reported per tested application and must not be inferred from unit tests alone.
+
+## Implementation inconsistency register
+
+The historical specification described keyboard events as the primary method and implied that Accessibility permission was optional. The current implementation intentionally uses an explicit Accessibility gate, AX value replacement, a frontmost-only clipboard-paste compatibility fallback, and a captured-process keyboard fallback. This intentional difference must not be removed to restore the historical behavior.

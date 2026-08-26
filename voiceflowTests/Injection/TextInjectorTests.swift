@@ -16,14 +16,36 @@ final class TextInjectorTests: XCTestCase {
         XCTAssertFalse(TextInjector.usesFrontmostKeyboardEvents(for: nil))
     }
 
+    func test_textInjector_usesClipboardPasteFallback_onlyForFrontmostNonTerminalTargets() {
+        XCTAssertTrue(
+            TextInjector.shouldUseClipboardPasteFallback(
+                isTerminalTarget: false,
+                isFrontmostTarget: true
+            )
+        )
+        XCTAssertFalse(
+            TextInjector.shouldUseClipboardPasteFallback(
+                isTerminalTarget: true,
+                isFrontmostTarget: true
+            )
+        )
+        XCTAssertFalse(
+            TextInjector.shouldUseClipboardPasteFallback(
+                isTerminalTarget: false,
+                isFrontmostTarget: false
+            )
+        )
+    }
+
     func test_textInjector_usesPasteWriter_forTerminalTarget() throws {
         let poster = TestKeyboardEventPoster()
-        let paster = TestTerminalTextPaster()
+        let paster = TestTextPaster()
         let injector = TextInjector(
             keyboardEventPoster: poster,
-            terminalTextPaster: paster,
+            textPaster: paster,
             permissionChecker: { true },
-            bundleIdentifierProvider: { _ in "com.apple.Terminal" }
+            bundleIdentifierProvider: { _ in "com.apple.Terminal" },
+            frontmostApplicationProvider: { _ in true }
         )
         let targetApp = try XCTUnwrap(
             NSRunningApplication(processIdentifier: ProcessInfo.processInfo.processIdentifier)
@@ -32,21 +54,64 @@ final class TextInjectorTests: XCTestCase {
         try injector.inject(text: "echo hello", into: targetApp)
 
         XCTAssertEqual(paster.pastedTexts, ["echo hello"])
+        XCTAssertEqual(paster.moveCaretToEndOfLineFlags, [true])
         XCTAssertTrue(poster.postedTexts.isEmpty)
+    }
+
+    func test_textInjector_usesClipboardPasteFallback_forFrontmostNonTerminalTarget() throws {
+        let poster = TestKeyboardEventPoster()
+        let paster = TestTextPaster()
+        let injector = TextInjector(
+            keyboardEventPoster: poster,
+            textPaster: paster,
+            permissionChecker: { true },
+            bundleIdentifierProvider: { _ in "com.apple.TextEdit" },
+            frontmostApplicationProvider: { _ in true }
+        )
+        let targetApp = try XCTUnwrap(
+            NSRunningApplication(processIdentifier: ProcessInfo.processInfo.processIdentifier)
+        )
+
+        try injector.inject(text: "plain text", into: targetApp)
+
+        XCTAssertEqual(paster.pastedTexts, ["plain text"])
+        XCTAssertEqual(paster.moveCaretToEndOfLineFlags, [false])
+        XCTAssertTrue(poster.postedTexts.isEmpty)
+    }
+
+    func test_textInjector_usesKeyboardEvents_forNonFrontmostTerminalTarget() throws {
+        let poster = TestKeyboardEventPoster()
+        let paster = TestTextPaster()
+        let injector = TextInjector(
+            keyboardEventPoster: poster,
+            textPaster: paster,
+            permissionChecker: { true },
+            bundleIdentifierProvider: { _ in "com.apple.Terminal" },
+            frontmostApplicationProvider: { _ in false }
+        )
+        let targetApp = try XCTUnwrap(
+            NSRunningApplication(processIdentifier: ProcessInfo.processInfo.processIdentifier)
+        )
+
+        try injector.inject(text: "terminal text", into: targetApp)
+
+        XCTAssertTrue(paster.pastedTexts.isEmpty)
+        XCTAssertEqual(poster.postedTexts, ["terminal text"])
+        XCTAssertEqual(poster.preferredFrontmostSessionFlags, [false])
     }
 
     func test_terminalPasteMovesInputToEndOfLine() throws {
         let pasteboard = NSPasteboard(name: NSPasteboard.Name("VoiceFlowTerminalEndTests"))
         let clipboardWriter = TestPasteboardClipboardWriter(pasteboard: pasteboard)
         let commandPoster = TestPasteCommandPoster()
-        let paster = SystemTerminalTextPaster(
+        let paster = SystemTextPaster(
             clipboardWriter: clipboardWriter,
             pasteCommandPoster: commandPoster,
             pasteboard: pasteboard,
             restoreDelay: 0
         )
 
-        try paster.paste(text: "terminal output")
+        try paster.paste(text: "terminal output", moveCaretToEndOfLine: true)
 
         XCTAssertEqual(commandPoster.postCount, 1)
         XCTAssertEqual(commandPoster.endOfLinePostCount, 1)
@@ -69,7 +134,7 @@ final class TextInjectorTests: XCTestCase {
         pasteboard.setString("previous clipboard", forType: .string)
         let clipboardWriter = TestPasteboardClipboardWriter(pasteboard: pasteboard)
         let commandPoster = TestPasteCommandPoster()
-        let paster = SystemTerminalTextPaster(
+        let paster = SystemTextPaster(
             clipboardWriter: clipboardWriter,
             pasteCommandPoster: commandPoster,
             pasteboard: pasteboard,
@@ -80,6 +145,7 @@ final class TextInjectorTests: XCTestCase {
 
         XCTAssertEqual(clipboardWriter.copiedTexts, ["terminal output"])
         XCTAssertEqual(commandPoster.postCount, 1)
+        XCTAssertEqual(commandPoster.endOfLinePostCount, 0)
         XCTAssertEqual(pasteboard.string(forType: .string), "previous clipboard")
         pasteboard.clearContents()
     }
@@ -88,7 +154,8 @@ final class TextInjectorTests: XCTestCase {
         let poster = TestKeyboardEventPoster()
         let injector = TextInjector(
             keyboardEventPoster: poster,
-            permissionChecker: { true }
+            permissionChecker: { true },
+            frontmostApplicationProvider: { _ in false }
         )
         let targetApp = try XCTUnwrap(
             NSRunningApplication(processIdentifier: ProcessInfo.processInfo.processIdentifier)
@@ -164,7 +231,8 @@ final class TextInjectorTests: XCTestCase {
         poster.error = TestInjectionError()
         let injector = TextInjector(
             keyboardEventPoster: poster,
-            permissionChecker: { true }
+            permissionChecker: { true },
+            frontmostApplicationProvider: { _ in false }
         )
         let targetApp = try XCTUnwrap(
             NSRunningApplication(processIdentifier: ProcessInfo.processInfo.processIdentifier)

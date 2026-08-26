@@ -78,13 +78,19 @@ final class TestPasteCommandPoster: PasteCommandPosting {
     }
 }
 
-final class TestTerminalTextPaster: TerminalTextPasting {
+final class TestTextPaster: TextPasting {
     private(set) var pastedTexts: [String] = []
+    private(set) var moveCaretToEndOfLineFlags: [Bool] = []
     var error: Error?
 
     func paste(text: String) throws {
+        try paste(text: text, moveCaretToEndOfLine: false)
+    }
+
+    func paste(text: String, moveCaretToEndOfLine: Bool) throws {
         if let error { throw error }
         pastedTexts.append(text)
+        moveCaretToEndOfLineFlags.append(moveCaretToEndOfLine)
     }
 }
 

@@ -19,8 +19,15 @@ extension KeyboardEventPosting {
     }
 }
 
-protocol TerminalTextPasting: AnyObject {
+protocol TextPasting: AnyObject {
     func paste(text: String) throws
+    func paste(text: String, moveCaretToEndOfLine: Bool) throws
+}
+
+extension TextPasting {
+    func paste(text: String, moveCaretToEndOfLine: Bool) throws {
+        try paste(text: text)
+    }
 }
 
 protocol TextInjecting: AnyObject {
@@ -57,7 +64,7 @@ protocol FocusedTextSelectionReading: AnyObject {
     func selectedText(in targetApp: NSRunningApplication?) throws -> String?
 }
 
-final class SystemTerminalTextPaster: TerminalTextPasting {
+final class SystemTextPaster: TextPasting {
     private let clipboardWriter: ClipboardWriting
     private let pasteCommandPoster: PasteCommandPosting
     private let pasteboard: NSPasteboard
@@ -76,13 +83,19 @@ final class SystemTerminalTextPaster: TerminalTextPasting {
     }
 
     func paste(text: String) throws {
+        try paste(text: text, moveCaretToEndOfLine: false)
+    }
+
+    func paste(text: String, moveCaretToEndOfLine: Bool) throws {
         let snapshot = PasteboardSnapshot(pasteboard: pasteboard)
         try clipboardWriter.copy(text: text)
         do {
             try pasteCommandPoster.postPasteCommand()
             Thread.sleep(forTimeInterval: restoreDelay)
-            try pasteCommandPoster.postEndOfLineCommand()
-            Thread.sleep(forTimeInterval: restoreDelay)
+            if moveCaretToEndOfLine {
+                try pasteCommandPoster.postEndOfLineCommand()
+                Thread.sleep(forTimeInterval: restoreDelay)
+            }
             snapshot.restore(to: pasteboard)
         } catch {
             snapshot.restore(to: pasteboard)
@@ -152,10 +165,11 @@ private struct CGEventPasteCommandPoster: PasteCommandPosting {
 
 final class TextInjector: TextInjecting, FocusedTextSelectionReading, TextInputAvailabilityChecking {
     private let keyboardEventPoster: KeyboardEventPosting
-    private let terminalTextPaster: TerminalTextPasting
+    private let textPaster: TextPasting
     private let permissionChecker: () -> Bool
     private let permissionRequester: () -> Void
     private let bundleIdentifierProvider: (NSRunningApplication) -> String?
+    private let frontmostApplicationProvider: (NSRunningApplication) -> Bool
 
     var isAccessibilityPermissionGranted: Bool {
         permissionChecker()
@@ -163,9 +177,12 @@ final class TextInjector: TextInjecting, FocusedTextSelectionReading, TextInputA
 
     init(
         keyboardEventPoster: KeyboardEventPosting = CGEventKeyboardEventPoster(),
-        terminalTextPaster: TerminalTextPasting = SystemTerminalTextPaster(),
+        textPaster: TextPasting = SystemTextPaster(),
         permissionChecker: @escaping () -> Bool = { AXIsProcessTrusted() },
         bundleIdentifierProvider: @escaping (NSRunningApplication) -> String? = { $0.bundleIdentifier },
+        frontmostApplicationProvider: @escaping (NSRunningApplication) -> Bool = { application in
+            NSWorkspace.shared.frontmostApplication?.processIdentifier == application.processIdentifier
+        },
         permissionRequester: @escaping () -> Void = {
             let options = [
                 kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true
@@ -174,10 +191,11 @@ final class TextInjector: TextInjecting, FocusedTextSelectionReading, TextInputA
         }
     ) {
         self.keyboardEventPoster = keyboardEventPoster
-        self.terminalTextPaster = terminalTextPaster
+        self.textPaster = textPaster
         self.permissionChecker = permissionChecker
         self.permissionRequester = permissionRequester
         self.bundleIdentifierProvider = bundleIdentifierProvider
+        self.frontmostApplicationProvider = frontmostApplicationProvider
     }
 
     func requestAccessibilityPermission() {
@@ -208,7 +226,8 @@ final class TextInjector: TextInjecting, FocusedTextSelectionReading, TextInputA
                kAXTextFieldRole as String,
                kAXTextAreaRole as String,
                "AXSearchField",
-               kAXComboBoxRole as String
+               kAXComboBoxRole as String,
+               "AXWebArea"
            ].contains(role) {
             return true
         }
@@ -224,6 +243,16 @@ final class TextInjector: TextInjecting, FocusedTextSelectionReading, TextInputA
         }
         guard (value as? String) != nil else {
             return false
+        }
+
+        var isSettable = DarwinBoolean(false)
+        let settableResult = AXUIElementIsAttributeSettable(
+            focusedElement,
+            kAXValueAttribute as CFString,
+            &isSettable
+        )
+        if settableResult == .success {
+            return isSettable.boolValue
         }
 
         var selectedRange: CFTypeRef?
@@ -292,6 +321,13 @@ final class TextInjector: TextInjecting, FocusedTextSelectionReading, TextInputA
         ].contains(bundleIdentifier)
     }
 
+    static func shouldUseClipboardPasteFallback(
+        isTerminalTarget: Bool,
+        isFrontmostTarget: Bool
+    ) -> Bool {
+        isFrontmostTarget && !isTerminalTarget
+    }
+
     static func endCaretLocation(
         existingText: String,
         selectedRange: NSRange,
@@ -340,9 +376,11 @@ final class TextInjector: TextInjecting, FocusedTextSelectionReading, TextInputA
             throw TextInjectionError.accessibilityPermissionDenied
         }
 
-        if Self.usesFrontmostKeyboardEvents(for: bundleIdentifierProvider(targetApp)) {
+        let isTerminalTarget = Self.usesFrontmostKeyboardEvents(for: bundleIdentifierProvider(targetApp))
+        let isFrontmostTarget = frontmostApplicationProvider(targetApp)
+        if isTerminalTarget && isFrontmostTarget {
             do {
-                try terminalTextPaster.paste(text: text)
+                try textPaster.paste(text: text, moveCaretToEndOfLine: true)
                 VoiceFlowLog.pipeline.info("text_injection_method_succeeded method=terminal_paste")
                 return
             } catch {
@@ -360,8 +398,21 @@ final class TextInjector: TextInjecting, FocusedTextSelectionReading, TextInputA
             }
         }
 
+        if Self.shouldUseClipboardPasteFallback(
+            isTerminalTarget: isTerminalTarget,
+            isFrontmostTarget: isFrontmostTarget
+        ) {
+            do {
+                try textPaster.paste(text: text, moveCaretToEndOfLine: false)
+                VoiceFlowLog.pipeline.info("text_injection_method_succeeded method=clipboard_paste_fallback")
+                return
+            } catch {
+                VoiceFlowLog.pipeline.error("text_injection_method_failed method=clipboard_paste_fallback error=\(String(describing: error), privacy: .public)")
+            }
+        }
+
         do {
-            let useFrontmostSession = Self.usesFrontmostKeyboardEvents(for: bundleIdentifierProvider(targetApp))
+            let useFrontmostSession = isTerminalTarget && isFrontmostTarget
             try keyboardEventPoster.post(
                 text: text,
                 to: processIdentifier,
