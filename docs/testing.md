@@ -12,7 +12,7 @@ Testing requires a Mac with macOS 14 or later and the full Xcode installation. T
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 ```
 
-The current automated baseline is **186 XCTest tests with zero failures**. Tests that require microphone, Accessibility, a live WhisperKit model, or another application are supplemented by manual verification rather than being made dependent on a particular user machine.
+The current automated baseline is **191 XCTest tests with zero failures**. Tests that require microphone, Accessibility, a live WhisperKit model, or another application are supplemented by manual verification rather than being made dependent on a particular user machine.
 
 ## Automated XCTest suite
 
@@ -35,7 +35,7 @@ xcodebuild \
 A successful run ends with output similar to:
 
 ```text
-Executed 186 tests, with 0 failures
+Executed 191 tests, with 0 failures
 ** TEST SUCCEEDED **
 ```
 
@@ -87,7 +87,7 @@ xcodebuild \
 | Local speech engines | WhisperKit package import and session-factory behavior; Parakeet/FluidAudio session loading through test doubles; engine routing, persisted selection, model readiness, caching, switching, missing models, and transcription error mapping. |
 | Model management | WhisperKit catalog entries, canonical local paths, direct Hub layout, component validation, nested-folder rejection, download progress, failed-load cleanup, persisted selection, active-model deletion protection, and Parakeet local-cache/platform status. |
 | Text processing | Conservative whitespace and formatting behavior without changing dictated meaning. |
-| Text injection | Empty input, missing target, Accessibility failure, keyboard fallback behavior, Terminal-family paste routing, line-end normalization and clipboard restoration, end-of-text caret placement, focused text-input detection, clipboard fallback, and injector error mapping. |
+| Text injection | Empty input, missing target, Accessibility failure, keyboard fallback behavior, Terminal-family paste routing, line-end normalization and clipboard restoration, end-of-text caret placement, capability-based focused-input detection, writable/read-only/disabled classification, native/web/custom role coverage, clipboard fallback, and injector error mapping. |
 | Injection coordination | Processing/injecting/completed/clipboard-completed transitions, successful completion sound selection, disabled sound behavior, clipboard delivery, and no sound on failures. |
 | Overlay UI | Loading model, Listening, Processing, provider-specific `Using Claude...`/`Using ChatGPT...` labels, Done, Copied to Clipboard, error states, animation cancellation, and approximately 400 ms completion dismissal. |
 | Settings UI | General, AI, Models, Snippets, and About navigation; overlay visibility; completion sound defaults and persistence; audio-retention defaults and persistence; Delete All Audio; model selection; download progress across tabs; model actions; Claude enablement; Grammar Fix toggle; provider/model persistence; custom-prefix persistence; Claude model-list decoding; masked Configured API-key status; Change/Remove controls; and microphone/Accessibility permission recovery. |
@@ -181,19 +181,23 @@ VoiceFlow expects the direct WhisperKit Hub repository layout below that root an
 
 ### Injection and permission recovery
 
-The output implementation has two related decisions: `InjectionCoordinator` first determines whether the captured application exposes a supported focused text input; `TextInjector` then chooses the safest route for that target. The exact route is application- and control-dependent. A successful TextEdit test does not establish universal compatibility.
+The output implementation has two related decisions: `InjectionCoordinator` first determines whether the captured application exposes a supported focused text input; `TextInjector` then chooses the safest route for that target. Detection requires an enabled focused element with a positive writable-value or selected-range signal; an explicit non-settable value is treated as read-only. A recognized text role may be used conservatively when a string AX value exists but the settable query is unavailable. The exact route remains application- and control-dependent. A successful TextEdit test does not establish universal compatibility.
 
 | Scenario | Procedure | Expected result |
 |---|---|---|
 | Native editable control | Focus a TextEdit document or another native editable field, optionally select text, and complete dictation. | Accessibility value replacement is attempted first. The selected UTF-16 range is replaced when exposed, the caret is placed after the inserted text when supported, and no temporary paste changes the prior clipboard. |
-| Browser textarea/contenteditable | In Safari, Chrome, or Firefox, focus a disposable textarea or `contenteditable` editor and complete dictation. | If the control rejects AX value mutation, VoiceFlow may use frontmost Command-V with temporary clipboard contents, then restores the previous clipboard. Record the exact browser and editor result; do not generalize it to all web controls. |
+| Native search/combo control | Focus an `NSSearchField` or editable `NSComboBox`, optionally select text, and complete dictation. | The control is eligible only when it exposes a string value and writable/selection capability. Select-only combo boxes must not be treated as general text targets. |
+| Secure/token control | Focus a disposable secure field or token field only in a safe test account and complete dictation. | Behavior is conditional on AX exposure and writability. Do not use secrets; do not claim blanket support if the control masks, tokenizes, rejects paste, or rejects synthetic events. |
+| Disabled/read-only control | Focus a disabled, static, or explicitly read-only text control and complete dictation. | The control is classified as unsupported for direct injection, and the coordinator copies the final text to the clipboard rather than claiming it was edited. |
+| Browser textarea/contenteditable | In Safari, Chrome, or Firefox, focus a disposable textarea or `contenteditable` editor and complete dictation. | If the control rejects AX value mutation, VoiceFlow may use frontmost Command-V with temporary clipboard contents, then restores the previous clipboard. Record the exact browser/editor result; do not generalize it to all web controls. |
+| ARIA/custom web textbox | Focus a disposable single-line or multiline ARIA textbox, including an editable combobox, and complete dictation. | The result depends on whether the browser maps the widget to a writable AX value or accepts paste. A select-only combobox is not a general text target. |
 | Electron/code editor | Focus a disposable editable control in an Electron or code editor application and complete dictation. | AX, frontmost paste, or process-targeted Unicode keyboard events may succeed depending on the control. No global paste is sent to another application. Record unsupported controls as limitations rather than failures of the test harness. |
 | Accessibility permitted | Grant Accessibility and any required Input Monitoring permission, focus an editable control, and complete dictation. | Output is delivered through the applicable route, the overlay reaches Done, and the resulting caret/output behavior is checked. |
 | Accessibility denied | Revoke Accessibility permission, complete a session, and observe the result. | VoiceFlow requests or explains the permission, reports an Accessibility error, and never claims that text was inserted. |
 | Frontmost target changes | Start recording with one application focused, switch applications or close the target before output completes, and observe the result. | The new frontmost application never receives a global Command-V. The original process-targeted keyboard fallback may be attempted, or an error may be shown if the target cannot accept it. |
 | Terminal injection | Focus Terminal, iTerm2, Alacritty, Ghostty, Kitty, or WezTerm; copy a harmless clipboard value; dictate a short non-sensitive command or sentence. | While the captured terminal remains frontmost, VoiceFlow snapshots the clipboard, writes temporary output, posts Command-V, posts Control-E to move the caret to line end, restores the prior clipboard, and never presses Enter. |
 | Non-frontmost terminal | Begin with a terminal target, change focus before output completes, and complete the session. | VoiceFlow skips global paste and does not use terminal Control-E paste routing. It may send Unicode events to the captured process identifier; the new frontmost application must remain untouched. |
-| Read-only/no supported input | Focus a read-only element or leave no supported text input active, then complete dictation. | The coordinator copies the final text to the general clipboard and shows **Copied to Clipboard**, or reports a clipboard failure. It does not claim that the read-only element was edited. |
+| Read-only/no supported input | Focus a disabled, static, explicitly read-only, or unsupported custom element, then complete dictation. | The coordinator copies the final text to the general clipboard and shows **Copied to Clipboard**, or reports a clipboard failure. It does not claim that the read-only element was edited. A recognized role with an explicit non-settable AXValue must take this path. |
 | Clipboard preservation | Put a disposable marker in the clipboard, test a frontmost non-terminal paste fallback and a terminal paste, then inspect the clipboard afterward. | The marker remains available after temporary paste, including after a paste error where the system permits observation. |
 
 ### First-launch onboarding checks

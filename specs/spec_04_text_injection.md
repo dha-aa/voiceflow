@@ -59,15 +59,11 @@ This frontmost check protects against a common race: the user starts recording i
 
 `hasTextInput(in:)` is used by `InjectionCoordinator` before it chooses between injection and clipboard delivery. It returns `false` when the target is invalid or Accessibility trust is absent.
 
-Terminal-family applications are treated as supported text-input targets because their shell prompt is not consistently represented as a writable AX text field. For other applications, VoiceFlow obtains the focused AX element and checks, in order:
+Terminal-family applications are treated as supported text-input targets because their shell prompt is not consistently represented as a writable AX text field. For other applications, VoiceFlow obtains the focused AX element and evaluates its capabilities rather than trusting a role alone. It reads the role, enabled state, string `kAXValueAttribute`, settable status for that value, and selected-text range. A control is considered supported when it is not explicitly disabled and exposes either a string value with a positive writability signal or a selected-text range. If settable status is unavailable, a recognized text role with a string value is accepted as a conservative fallback. Recognized roles include `AXTextField`, `AXTextArea`, `AXSearchField`, `AXComboBox`, `AXWebArea`, `AXSecureTextField`, and `AXTokenField` where the other capability signals are present.
 
-1. Whether its role is `AXTextField`, `AXTextArea`, `AXSearchField`, `AXComboBox`, or `AXWebArea`.
-2. Otherwise, whether it exposes a string `kAXValueAttribute` and reports that attribute as settable.
-3. If settable status cannot be queried, whether it exposes `kAXSelectedTextRangeAttribute` alongside the string value.
+An explicit non-settable value is always treated as read-only, even when the role is a text-related role. An element without a string value is not treated as a normal AX-value target. A control that exposes none of these signals is not considered a supported text input by the coordinator. In that case, the final text is copied to the clipboard rather than being sent to an unrelated or unsupported target.
 
-An explicit non-settable value is treated as read-only. A control that exposes none of these signals is not considered a supported text input by the coordinator. In that case, the final text is copied to the clipboard rather than being sent to an unrelated or unsupported target.
-
-Detection is intentionally capability-based rather than a hard-coded application allowlist. TextEdit, native AppKit text controls, browser editors, Electron/editor controls, and other applications are supported when they expose compatible AX attributes or accept the later fallback route. A particular browser, editor, custom control, or terminal version may still reject one or more routes.
+Detection is intentionally capability-based rather than a hard-coded application allowlist. TextEdit, native AppKit text controls, browser editors, Electron/editor controls, and other applications are supported when they expose compatible AX attributes or accept the later fallback route. A particular browser, editor, custom control, secure field, token field, or terminal version may still reject one or more routes. A web page that exposes only a generic `AXWebArea` without editable value/selection signals may still be classified as unsupported; VoiceFlow does not infer editability from the visual appearance of a page.
 
 ## 5. Injection route order
 

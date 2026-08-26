@@ -220,17 +220,15 @@ final class TextInjector: TextInjecting, FocusedTextSelectionReading, TextInputA
             kAXRoleAttribute as CFString,
             &roleValue
         )
-        if roleResult == .success,
-           let role = roleValue as? String,
-           [
-               kAXTextFieldRole as String,
-               kAXTextAreaRole as String,
-               "AXSearchField",
-               kAXComboBoxRole as String,
-               "AXWebArea"
-           ].contains(role) {
-            return true
-        }
+        let role = roleResult == .success ? roleValue as? String : nil
+
+        var enabledValue: CFTypeRef?
+        let enabledResult = AXUIElementCopyAttributeValue(
+            focusedElement,
+            kAXEnabledAttribute as CFString,
+            &enabledValue
+        )
+        let isEnabled = enabledResult == .success ? enabledValue as? Bool : nil
 
         var value: CFTypeRef?
         let valueResult = AXUIElementCopyAttributeValue(
@@ -238,12 +236,7 @@ final class TextInjector: TextInjecting, FocusedTextSelectionReading, TextInputA
             kAXValueAttribute as CFString,
             &value
         )
-        guard valueResult == .success else {
-            return false
-        }
-        guard (value as? String) != nil else {
-            return false
-        }
+        let hasStringValue = valueResult == .success && value is String
 
         var isSettable = DarwinBoolean(false)
         let settableResult = AXUIElementIsAttributeSettable(
@@ -251,16 +244,61 @@ final class TextInjector: TextInjecting, FocusedTextSelectionReading, TextInputA
             kAXValueAttribute as CFString,
             &isSettable
         )
-        if settableResult == .success {
-            return isSettable.boolValue
-        }
+        let valueIsSettable = settableResult == .success ? isSettable.boolValue : nil
 
         var selectedRange: CFTypeRef?
-        return AXUIElementCopyAttributeValue(
+        let hasSelectedTextRange = AXUIElementCopyAttributeValue(
             focusedElement,
             kAXSelectedTextRangeAttribute as CFString,
             &selectedRange
         ) == .success
+
+        return Self.isSupportedTextInput(
+            role: role,
+            hasStringValue: hasStringValue,
+            valueIsSettable: valueIsSettable,
+            hasSelectedTextRange: hasSelectedTextRange,
+            isEnabled: isEnabled
+        )
+    }
+
+    static func isSupportedTextInput(
+        role: String?,
+        hasStringValue: Bool,
+        valueIsSettable: Bool?,
+        hasSelectedTextRange: Bool,
+        isEnabled: Bool?
+    ) -> Bool {
+        guard isEnabled != false else {
+            return false
+        }
+
+        if valueIsSettable == false {
+            return false
+        }
+
+        if hasSelectedTextRange {
+            return true
+        }
+
+        if valueIsSettable == true {
+            return hasStringValue
+        }
+
+        guard hasStringValue else {
+            return false
+        }
+
+        // Some standard controls expose a string AXValue but do not answer
+        // the settable query reliably. Their role is a safer signal than
+        // treating every string-valued accessibility element as editable.
+        return [
+            kAXTextFieldRole as String,
+            kAXTextAreaRole as String,
+            "AXSearchField",
+            "AXSecureTextField",
+            "AXTokenField"
+        ].contains(role)
     }
 
     func selectedText(in targetApp: NSRunningApplication?) throws -> String? {

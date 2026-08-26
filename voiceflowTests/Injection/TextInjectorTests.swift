@@ -37,6 +37,84 @@ final class TextInjectorTests: XCTestCase {
         )
     }
 
+    func test_textInjector_classifiesSupportedTextInputsByCapability() {
+        XCTAssertTrue(
+            TextInjector.isSupportedTextInput(
+                role: "AXTextField",
+                hasStringValue: true,
+                valueIsSettable: true,
+                hasSelectedTextRange: false,
+                isEnabled: true
+            )
+        )
+        XCTAssertTrue(
+            TextInjector.isSupportedTextInput(
+                role: "AXWebArea",
+                hasStringValue: true,
+                valueIsSettable: nil,
+                hasSelectedTextRange: true,
+                isEnabled: true
+            )
+        )
+        XCTAssertTrue(
+            TextInjector.isSupportedTextInput(
+                role: "AXSecureTextField",
+                hasStringValue: true,
+                valueIsSettable: nil,
+                hasSelectedTextRange: false,
+                isEnabled: true
+            )
+        )
+        XCTAssertTrue(
+            TextInjector.isSupportedTextInput(
+                role: "AXWebArea",
+                hasStringValue: false,
+                valueIsSettable: nil,
+                hasSelectedTextRange: true,
+                isEnabled: true
+            )
+        )
+    }
+
+    func test_textInjector_rejectsReadOnlyDisabledAndNonTextAccessibilityElements() {
+        XCTAssertFalse(
+            TextInjector.isSupportedTextInput(
+                role: "AXTextField",
+                hasStringValue: true,
+                valueIsSettable: false,
+                hasSelectedTextRange: true,
+                isEnabled: true
+            )
+        )
+        XCTAssertFalse(
+            TextInjector.isSupportedTextInput(
+                role: "AXTextArea",
+                hasStringValue: true,
+                valueIsSettable: true,
+                hasSelectedTextRange: true,
+                isEnabled: false
+            )
+        )
+        XCTAssertFalse(
+            TextInjector.isSupportedTextInput(
+                role: "AXStaticText",
+                hasStringValue: true,
+                valueIsSettable: nil,
+                hasSelectedTextRange: false,
+                isEnabled: true
+            )
+        )
+        XCTAssertFalse(
+            TextInjector.isSupportedTextInput(
+                role: "AXTextArea",
+                hasStringValue: false,
+                valueIsSettable: nil,
+                hasSelectedTextRange: false,
+                isEnabled: true
+            )
+        )
+    }
+
     func test_textInjector_usesPasteWriter_forTerminalTarget() throws {
         let poster = TestKeyboardEventPoster()
         let paster = TestTextPaster()
