@@ -6,6 +6,23 @@ struct InjectionContext {
     let bundleIdentifier: String?
     let isTerminalTarget: Bool
     let isFrontmostTarget: Bool
+    let isStillFrontmost: () -> Bool
+
+    init(
+        targetApp: NSRunningApplication,
+        processIdentifier: pid_t,
+        bundleIdentifier: String?,
+        isTerminalTarget: Bool,
+        isFrontmostTarget: Bool,
+        isStillFrontmost: @escaping () -> Bool = { true }
+    ) {
+        self.targetApp = targetApp
+        self.processIdentifier = processIdentifier
+        self.bundleIdentifier = bundleIdentifier
+        self.isTerminalTarget = isTerminalTarget
+        self.isFrontmostTarget = isFrontmostTarget
+        self.isStillFrontmost = isStillFrontmost
+    }
 }
 
 protocol TextInjectionStrategy {

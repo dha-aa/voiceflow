@@ -16,6 +16,15 @@ final class TextInjectorTests: XCTestCase {
         XCTAssertFalse(TextInjector.usesFrontmostKeyboardEvents(for: nil))
     }
 
+    func test_textInjector_recognizesKnownBrowserApplicationsForPasteFallback() {
+        XCTAssertTrue(TextInjector.isKnownBrowserApplication(bundleIdentifier: "com.brave.Browser"))
+        XCTAssertTrue(TextInjector.isKnownBrowserApplication(bundleIdentifier: "com.google.Chrome.helper"))
+        XCTAssertTrue(TextInjector.isKnownBrowserApplication(bundleIdentifier: "org.mozilla.firefox"))
+        XCTAssertTrue(TextInjector.isKnownBrowserApplication(bundleIdentifier: "com.apple.Safari"))
+        XCTAssertFalse(TextInjector.isKnownBrowserApplication(bundleIdentifier: "com.apple.TextEdit"))
+        XCTAssertFalse(TextInjector.isKnownBrowserApplication(bundleIdentifier: nil))
+    }
+
     func test_injectionStrategies_selectOnlyApplicableRoutes() throws {
         let targetApp = try XCTUnwrap(
             NSRunningApplication(processIdentifier: ProcessInfo.processInfo.processIdentifier)
@@ -102,6 +111,15 @@ final class TextInjectorTests: XCTestCase {
         )
         XCTAssertTrue(
             TextInjector.isSupportedTextInput(
+                role: "AXComboBox",
+                hasStringValue: false,
+                valueIsSettable: nil,
+                hasSelectedTextRange: false,
+                isEnabled: true
+            )
+        )
+        XCTAssertTrue(
+            TextInjector.isSupportedTextInput(
                 role: "AXWebArea",
                 hasStringValue: false,
                 valueIsSettable: nil,
@@ -141,7 +159,7 @@ final class TextInjectorTests: XCTestCase {
         )
         XCTAssertFalse(
             TextInjector.isSupportedTextInput(
-                role: "AXTextArea",
+                role: "AXStaticText",
                 hasStringValue: false,
                 valueIsSettable: nil,
                 hasSelectedTextRange: false,
@@ -192,6 +210,31 @@ final class TextInjectorTests: XCTestCase {
         XCTAssertTrue(poster.postedTexts.isEmpty)
     }
 
+    func test_textInjector_skipsPasteWhenTargetStopsBeingFrontmost() throws {
+        let poster = TestKeyboardEventPoster()
+        let paster = TestTextPaster()
+        var frontmostCheckCount = 0
+        let injector = TextInjector(
+            keyboardEventPoster: poster,
+            textPaster: paster,
+            permissionChecker: { true },
+            bundleIdentifierProvider: { _ in "com.apple.TextEdit" },
+            frontmostApplicationProvider: { _ in
+                frontmostCheckCount += 1
+                return frontmostCheckCount == 1
+            }
+        )
+        let targetApp = try XCTUnwrap(
+            NSRunningApplication(processIdentifier: ProcessInfo.processInfo.processIdentifier)
+        )
+
+        try injector.inject(text: "target-safe text", into: targetApp)
+
+        XCTAssertTrue(frontmostCheckCount >= 2)
+        XCTAssertTrue(paster.pastedTexts.isEmpty)
+        XCTAssertEqual(poster.postedTexts, ["target-safe text"])
+    }
+
     func test_textInjector_usesKeyboardEvents_forNonFrontmostTerminalTarget() throws {
         let poster = TestKeyboardEventPoster()
         let paster = TestTextPaster()
@@ -239,6 +282,25 @@ final class TextInjectorTests: XCTestCase {
             ),
             ("replacement after" as NSString).length
         )
+    }
+
+    func test_pasteRestoresPreviousClipboardContents_whenClipboardWriteFails() throws {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("VoiceFlowPasteWriteFailureTests"))
+        pasteboard.clearContents()
+        pasteboard.setString("previous clipboard", forType: .string)
+        let clipboardWriter = TestPasteboardClipboardWriter(pasteboard: pasteboard)
+        clipboardWriter.error = TestInjectionError()
+        let paster = SystemTextPaster(
+            clipboardWriter: clipboardWriter,
+            pasteCommandPoster: TestPasteCommandPoster(),
+            pasteboard: pasteboard,
+            pasteDelay: 0,
+            restoreDelay: 0
+        )
+
+        XCTAssertThrowsError(try paster.paste(text: "new output"))
+        XCTAssertEqual(pasteboard.string(forType: .string), "previous clipboard")
+        pasteboard.clearContents()
     }
 
     func test_terminalPasteRestoresPreviousClipboardContents() throws {

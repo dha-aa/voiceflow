@@ -53,12 +53,14 @@ struct TestInjectionError: Error {}
 final class TestPasteboardClipboardWriter: ClipboardWriting {
     let pasteboard: NSPasteboard
     private(set) var copiedTexts: [String] = []
+    var error: Error?
 
     init(pasteboard: NSPasteboard) {
         self.pasteboard = pasteboard
     }
 
     func copy(text: String) throws {
+        if let error { throw error }
         copiedTexts.append(text)
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)

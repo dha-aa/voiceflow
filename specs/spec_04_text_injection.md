@@ -44,7 +44,7 @@ The overlay, Settings window, model manager, and provider-specific AI processing
 | `FocusedTextSelectionReading` | Same file | Reads selected text for selection-aware AI requests. |
 | `KeyboardEventPosting` | Same file | Injectable Unicode CGEvent posting seam. |
 | `TextPasting` | Same file | Injectable temporary-clipboard paste seam with optional terminal caret normalization. |
-| `SystemTextPaster` | Same file | Snapshots/restores the pasteboard, posts Command-V, and optionally posts Control-E. |
+| `SystemTextPaster` | Same file | Snapshots/restores the pasteboard, waits briefly for pasteboard propagation, posts Command-V, and optionally posts Control-E. Clipboard restoration covers write and event failures. |
 | `SystemClipboardWriter` | Same file | Writes output to the general pasteboard for clipboard delivery. |
 | `InjectionCoordinator` | `voiceflow/Core/Injection/InjectionCoordinator.swift` | Decides injection versus clipboard delivery, maps errors, plays success-only sound, and owns completion-state timing. |
 
@@ -62,11 +62,11 @@ This frontmost check protects against a common race: the user starts recording i
 
 `hasTextInput(in:)` is used by `InjectionCoordinator` before it chooses between injection and clipboard delivery. It returns `false` when the target is invalid or Accessibility trust is absent.
 
-Terminal-family applications are treated as supported text-input targets because their shell prompt is not consistently represented as a writable AX text field. For other applications, VoiceFlow obtains the focused AX element and evaluates its capabilities rather than trusting a role alone. It reads the role, enabled state, string `kAXValueAttribute`, settable status for that value, and selected-text range. A control is considered supported when it is not explicitly disabled and exposes either a string value with a positive writability signal or a selected-text range. If settable status is unavailable, a recognized text role with a string value is accepted as a conservative fallback. Recognized roles include `AXTextField`, `AXTextArea`, `AXSearchField`, `AXComboBox`, `AXWebArea`, `AXSecureTextField`, and `AXTokenField` where the other capability signals are present.
+Terminal-family applications are treated as supported text-input targets because their shell prompt is not consistently represented as a writable AX text field. For other applications, VoiceFlow obtains the focused AX element and evaluates its capabilities. It reads the role, enabled state, string `kAXValueAttribute`, settable status for that value, and selected-text range. A control is considered supported when it is not explicitly disabled and either exposes a string value with a positive writability signal, exposes a selected-text range, or has one of the recognized text roles eligible for a frontmost Command-V fallback. Recognized roles include `AXTextField`, `AXTextArea`, `AXSearchField`, `AXComboBox`, `AXWebArea`, `AXSecureTextField`, and `AXTokenField`.
 
-An explicit non-settable value is always treated as read-only, even when the role is a text-related role. An element without a string value is not treated as a normal AX-value target. A control that exposes none of these signals is not considered a supported text input by the coordinator. In that case, the final text is copied to the clipboard rather than being sent to an unrelated or unsupported target.
+An explicit non-settable value is always treated as read-only, even when the role is a text-related role. A role-only positive classification is intentionally used only to reach the frontmost paste strategy; it is not a claim that the focused control supports AX value replacement. A control that exposes none of these signals is not considered a supported text input by the coordinator. In that case, the final text is copied to the clipboard rather than being sent to an unrelated or unsupported target.
 
-Detection is intentionally capability-based rather than a hard-coded application allowlist. TextEdit, native AppKit text controls, browser editors, Electron/editor controls, and other applications are supported when they expose compatible AX attributes or accept the later fallback route. A particular browser, editor, custom control, secure field, token field, or terminal version may still reject one or more routes. A web page that exposes only a generic `AXWebArea` without editable value/selection signals may still be classified as unsupported; VoiceFlow does not infer editability from the visual appearance of a page.
+Detection is intentionally capability-based rather than a broad application allowlist. TextEdit, native AppKit text controls, browser editors, Electron/editor controls, and other applications are supported when they expose compatible AX attributes or accept the later fallback route. A particular browser, editor, custom control, secure field, token field, or terminal version may still reject one or more routes. A generic `AXWebArea` is eligible for the frontmost paste attempt because browsers often expose incomplete AX metadata; an ordinary non-editable page may simply ignore the paste. When a focused AX element cannot be retrieved at all, a currently frontmost known browser (`Safari`, `Chrome`, `Brave`, `Firefox`, `Edge`, `Opera`, `Vivaldi`, or `Arc`) is conservatively treated as an injection candidate so its web editor can receive the ordinary paste route. This exception is limited to a known browser that is frontmost at detection and is revalidated again immediately before Command-V. VoiceFlow does not infer successful editing from the visual appearance of a page and still falls back to clipboard delivery when the coordinator has no supported focused element.
 
 ## 5. Injection route order
 
@@ -75,8 +75,8 @@ After validation and permission checks, `inject(text:into:)` creates one `Inject
 The production order is:
 
 1. `TerminalPasteStrategy` for a frontmost terminal-family target.
-2. `AccessibilityValueStrategy` for AX value replacement.
-3. `ClipboardPasteStrategy` for a frontmost non-terminal target.
+2. `ClipboardPasteStrategy` for a frontmost non-terminal target; this explicitly writes the output to the temporary clipboard and posts Command-V.
+3. `AccessibilityValueStrategy` for AX value replacement when the copy-then-paste route is ineligible or fails.
 4. `KeyboardTypingStrategy` for captured-process Unicode events.
 5. A second `AccessibilityValueStrategy` recovery attempt after keyboard failure.
 
@@ -105,9 +105,11 @@ If the captured terminal is no longer frontmost, VoiceFlow skips global paste an
 
 ### 5.2 Standard and web-backed text controls
 
-For a frontmost non-terminal target, VoiceFlow first attempts Accessibility value replacement. It obtains the focused UI element, reads its string AX value, obtains the selected UTF-16 range when available, replaces that range, and attempts to set the caret immediately after the replacement. If no valid selected range is available, the insertion point defaults to the end of the existing value.
+For a frontmost non-terminal target, VoiceFlow first copies the output to a temporary clipboard and automatically posts Command-V while the captured target is still frontmost. This is the primary compatibility route for native, browser-backed, Electron, and custom controls because it uses the application’s ordinary paste handling.
 
-If AX value replacement fails, VoiceFlow attempts a normal clipboard paste while the captured target is still frontmost:
+If copy-then-Command-V fails, VoiceFlow attempts Accessibility value replacement. It obtains the focused UI element, reads its string AX value, obtains the selected UTF-16 range when available, replaces that range, and attempts to set the caret immediately after the replacement. If no valid selected range is available, the insertion point defaults to the end of the existing value.
+
+The copy-then-Command-V operation is:
 
 ```text
 snapshot clipboard → write temporary output → Command-V → restore clipboard
@@ -115,7 +117,7 @@ snapshot clipboard → write temporary output → Command-V → restore clipboar
 
 This route is intended to cover controls such as web-backed editors and custom/native controls that reject direct `kAXValueAttribute` mutation but honor ordinary paste. It has no terminal Control-E step.
 
-If the frontmost paste route fails or is not eligible, VoiceFlow posts Unicode keyboard events to the captured process identifier. The production poster sends text in chunks of 20 Swift characters. This route is not guaranteed to work in every application because some applications reject synthetic events, use custom editors, or require a different input mechanism.
+Immediately before either global Command-V route executes, the strategy revalidates that the originally captured process is still frontmost. If it is no longer frontmost, the global paste is skipped with a categorized target-safety error and the injector continues to the captured-process keyboard strategy. If the frontmost paste route fails or is not eligible, VoiceFlow posts Unicode keyboard events to the captured process identifier. The production poster sends text in chunks of 20 Swift characters. This route is not guaranteed to work in every application because some applications reject synthetic events, use custom editors, or require a different input mechanism.
 
 For a non-frontmost non-terminal target, VoiceFlow never sends a global Command-V. It may use the captured process-targeted keyboard fallback after AX failure. This preserves captured-target safety while acknowledging that the target application may not accept events while unfocused.
 
@@ -125,7 +127,7 @@ If the keyboard poster fails, VoiceFlow makes one additional Accessibility value
 
 ## 6. Clipboard preservation and no-target delivery
 
-`SystemTextPaster` snapshots all pasteboard item data and restores it after temporary paste. The restore occurs on both the success and error paths. Its normal `paste(text:)` operation does not send Control-E; terminal callers explicitly request `paste(text:moveCaretToEndOfLine: true)`.
+`SystemTextPaster` snapshots all pasteboard item data, writes the temporary output, waits approximately 20 ms for pasteboard propagation, posts the paste command, and restores the snapshot after temporary paste. The restore occurs on success and on errors from clipboard writing, Command-V, or terminal caret normalization. Its normal `paste(text:)` operation does not send Control-E; terminal callers explicitly request `paste(text:moveCaretToEndOfLine: true)`.
 
 `InjectionCoordinator` copies output directly to the general clipboard instead of calling `TextInjector` when:
 
@@ -187,7 +189,7 @@ Microphone permission is owned by the recording stage. Accessibility permission 
 
 | Test file | Required coverage |
 |---|---|
-| `voiceflowTests/Injection/TextInjectorTests.swift` | Terminal-family classification; frontmost-only clipboard fallback; terminal end-of-line intent; non-frontmost terminal process-targeted fallback; clipboard restoration; AX selection/caret helpers; empty/nil target handling; permission denial; keyboard fallback/error behavior. |
+| `voiceflowTests/Injection/TextInjectorTests.swift` | Terminal-family classification; frontmost-only clipboard fallback; live frontmost revalidation; terminal end-of-line intent; non-frontmost terminal process-targeted fallback; clipboard restoration including clipboard-write failure; AX selection/caret helpers; empty/nil target handling; permission denial; keyboard fallback/error behavior. |
 | `voiceflowTests/Injection/InjectionCoordinatorTests.swift` | Injecting-state gate; injection success; clipboard delivery; completion states; sound selection; no sound on failures; generic and Accessibility-specific error mapping. |
 | `voiceflowTests/Transcription/TranscriptionPipelineIntegrationTests.swift` | Final processed text and captured target reaching the injection callback. |
 
@@ -202,7 +204,7 @@ Use a fresh unsigned or Debug build, grant the required permissions, and use the
 | Scenario | Procedure | Expected result |
 |---|---|---|
 | Native field | Focus TextEdit or another native editable field, optionally select text, then dictate. | AX replacement reaches the selected range or caret, the caret is after the inserted text, and the prior clipboard remains intact. |
-| Browser editor | Test a disposable `contenteditable` or textarea in Safari, Chrome, or Firefox. | If AX mutation is rejected, a frontmost paste fallback may deliver the text; the clipboard is restored. Record the exact browser/editor result rather than generalizing it to all web apps. |
+| Browser editor | Test a disposable `contenteditable` or textarea in Safari, Chrome, Brave, Firefox, Edge, or another supported browser. Include Claude Chat and Reddit compose/reply fields with harmless text. | VoiceFlow attempts temporary clipboard write plus automatic Command-V while the captured browser remains frontmost, including when the browser exposes no focused AX element. The clipboard is restored. Record the exact browser and control result; do not generalize it to all web apps. |
 | Electron/editor control | Test a disposable editable control in an Electron or code editor application. | AX, frontmost paste, or keyboard fallback may succeed depending on the control; no other application receives a global paste. Record unsupported cases. |
 | Terminal-family | Focus Terminal, iTerm2, Alacritty, Ghostty, Kitty, or WezTerm; preserve a harmless clipboard value; dictate a short command without pressing Enter. | Frontmost terminal paste inserts the output, Control-E places the caret at line end, no Enter is sent, and the previous clipboard is restored. |
 | Captured target changes | Start in one application, hold Fn, switch applications or close the target before output completes. | The new frontmost application does not receive global Command-V. The original process-targeted fallback may be attempted or the operation may report an error. |
@@ -217,12 +219,13 @@ Use a fresh unsigned or Debug build, grant the required permissions, and use the
 - Accessibility trust is required and the system permission request is used when trust is absent.
 - The target captured at Fn-down is used; the current frontmost application is never substituted.
 - Terminal-family frontmost targets use temporary Command-V plus Control-E, restore the clipboard, and never receive automatic Enter.
-- Standard and web-backed targets use AX value replacement first, then frontmost-only clipboard paste, then captured-process Unicode keyboard events when appropriate.
+- Standard and web-backed targets use frontmost-only copy-then-Command-V first, then AX value replacement, then captured-process Unicode keyboard events when appropriate.
 - Non-frontmost targets never receive a global paste command.
 - AX selection replacement preserves the intended UTF-16 range and attempts to place the caret after the inserted text.
 - Normal non-terminal paste never posts Control-E.
+- Global Command-V is revalidated against the captured target immediately before it is posted.
 - No supported focused text input results in clipboard delivery, not false injection success.
-- Clipboard contents are restored after temporary paste, including paste errors.
+- Clipboard contents are restored after temporary paste, including clipboard-write, paste-command, and caret-command errors.
 - Output failures map to `.error(.injectionFailed)`, except missing Accessibility trust, which maps to `.error(.accessibilityPermissionDenied)`.
 - Successful injection and clipboard delivery produce their corresponding completion state and return to idle after approximately 400 ms unless superseded.
 - Completion sound is disabled by default and plays only after successful output.

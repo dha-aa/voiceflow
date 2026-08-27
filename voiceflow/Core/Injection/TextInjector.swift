@@ -68,17 +68,20 @@ final class SystemTextPaster: TextPasting {
     private let clipboardWriter: ClipboardWriting
     private let pasteCommandPoster: PasteCommandPosting
     private let pasteboard: NSPasteboard
+    private let pasteDelay: TimeInterval
     private let restoreDelay: TimeInterval
 
     init(
         clipboardWriter: ClipboardWriting = SystemClipboardWriter(),
         pasteCommandPoster: PasteCommandPosting = CGEventPasteCommandPoster(),
         pasteboard: NSPasteboard = .general,
+        pasteDelay: TimeInterval = 0.02,
         restoreDelay: TimeInterval = 0.05
     ) {
         self.clipboardWriter = clipboardWriter
         self.pasteCommandPoster = pasteCommandPoster
         self.pasteboard = pasteboard
+        self.pasteDelay = pasteDelay
         self.restoreDelay = restoreDelay
     }
 
@@ -88,8 +91,9 @@ final class SystemTextPaster: TextPasting {
 
     func paste(text: String, moveCaretToEndOfLine: Bool) throws {
         let snapshot = PasteboardSnapshot(pasteboard: pasteboard)
-        try clipboardWriter.copy(text: text)
         do {
+            try clipboardWriter.copy(text: text)
+            Thread.sleep(forTimeInterval: pasteDelay)
             try pasteCommandPoster.postPasteCommand()
             Thread.sleep(forTimeInterval: restoreDelay)
             if moveCaretToEndOfLine {
@@ -191,8 +195,8 @@ final class TextInjector: TextInjecting, FocusedTextSelectionReading, TextInputA
     ) {
         self.strategies = [
             TerminalPasteStrategy(textPaster: textPaster),
-            AccessibilityValueStrategy(),
             ClipboardPasteStrategy(textPaster: textPaster),
+            AccessibilityValueStrategy(),
             KeyboardTypingStrategy(keyboardEventPoster: keyboardEventPoster),
             AccessibilityValueStrategy(name: "accessibility_api_recovery")
         ]
@@ -211,11 +215,17 @@ final class TextInjector: TextInjecting, FocusedTextSelectionReading, TextInputA
               isAccessibilityPermissionGranted else {
             return false
         }
-        if Self.usesFrontmostKeyboardEvents(for: targetApp.bundleIdentifier) {
+        let bundleIdentifier = bundleIdentifierProvider(targetApp)
+        if Self.usesFrontmostKeyboardEvents(for: bundleIdentifier) {
             return true
         }
         guard let focusedElement = try? Self.focusedElement(in: targetApp) else {
-            return false
+            // Browser editors can remain focused while exposing no focused AX
+            // element. Keep the frontmost target eligible for ordinary paste;
+            // the injection strategy rechecks the captured process immediately
+            // before posting Command-V.
+            return frontmostApplicationProvider(targetApp)
+                && Self.isKnownBrowserApplication(bundleIdentifier: bundleIdentifier)
         }
 
         var roleValue: CFTypeRef?
@@ -286,23 +296,14 @@ final class TextInjector: TextInjecting, FocusedTextSelectionReading, TextInputA
         }
 
         if valueIsSettable == true {
-            return hasStringValue
+            return hasStringValue || role.map(Self.commandVPasteEligibleRoles.contains) == true
         }
 
-        guard hasStringValue else {
-            return false
-        }
-
-        // Some standard controls expose a string AXValue but do not answer
-        // the settable query reliably. Their role is a safer signal than
-        // treating every string-valued accessibility element as editable.
-        return [
-            kAXTextFieldRole as String,
-            kAXTextAreaRole as String,
-            "AXSearchField",
-            "AXSecureTextField",
-            "AXTokenField"
-        ].contains(role)
+        // Some standard and browser-backed controls expose an incomplete
+        // AXValue contract. Their text role is sufficient to attempt the
+        // frontmost paste strategy; direct AX replacement may still fail and
+        // will continue through the ordered fallback chain.
+        return role.map(Self.commandVPasteEligibleRoles.contains) == true
     }
 
     func selectedText(in targetApp: NSRunningApplication?) throws -> String? {
@@ -362,6 +363,31 @@ final class TextInjector: TextInjecting, FocusedTextSelectionReading, TextInputA
             "org.wezfurlong.wezterm"
         ].contains(bundleIdentifier)
     }
+
+    static func isKnownBrowserApplication(bundleIdentifier: String?) -> Bool {
+        guard let bundleIdentifier else { return false }
+        return [
+            "com.apple.Safari",
+            "com.apple.SafariTechnologyPreview",
+            "com.google.Chrome",
+            "com.brave.Browser",
+            "org.mozilla.firefox",
+            "com.microsoft.edgemac",
+            "com.operasoftware.Opera",
+            "com.vivaldi.Vivaldi",
+            "company.thebrowser.Browser"
+        ].contains { bundleIdentifier.hasPrefix($0) }
+    }
+
+    private static let commandVPasteEligibleRoles: Set<String> = [
+        kAXTextFieldRole as String,
+        kAXTextAreaRole as String,
+        "AXSearchField",
+        "AXWebArea",
+        "AXComboBox",
+        "AXSecureTextField",
+        "AXTokenField"
+    ]
 
     static func shouldUseClipboardPasteFallback(
         isTerminalTarget: Bool,
@@ -424,7 +450,10 @@ final class TextInjector: TextInjecting, FocusedTextSelectionReading, TextInputA
             processIdentifier: processIdentifier,
             bundleIdentifier: bundleIdentifier,
             isTerminalTarget: Self.usesFrontmostKeyboardEvents(for: bundleIdentifier),
-            isFrontmostTarget: frontmostApplicationProvider(targetApp)
+            isFrontmostTarget: frontmostApplicationProvider(targetApp),
+            isStillFrontmost: { [frontmostApplicationProvider] in
+                frontmostApplicationProvider(targetApp)
+            }
         )
         var lastError: Error?
 
@@ -547,6 +576,7 @@ final class TextInjector: TextInjecting, FocusedTextSelectionReading, TextInputA
     enum TextInjectionError: Error {
         case emptyText
         case targetApplicationUnavailable
+        case targetNoLongerFrontmost
         case accessibilityPermissionDenied
         case focusedElementUnavailable(status: AXError)
         case focusedValueUnavailable(status: AXError)
@@ -558,6 +588,7 @@ final class TextInjector: TextInjecting, FocusedTextSelectionReading, TextInputA
             switch self {
             case .emptyText: "empty_text"
             case .targetApplicationUnavailable: "target_application_unavailable"
+            case .targetNoLongerFrontmost: "target_no_longer_frontmost"
             case .accessibilityPermissionDenied: "accessibility_permission_denied"
             case .focusedElementUnavailable: "focused_element_unavailable"
             case .focusedValueUnavailable: "focused_value_unavailable"

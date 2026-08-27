@@ -13,6 +13,9 @@ struct TerminalPasteStrategy: TextInjectionStrategy {
     }
 
     func inject(text: String, context: InjectionContext) throws {
+        guard context.isStillFrontmost() else {
+            throw TextInjector.TextInjectionError.targetNoLongerFrontmost
+        }
         try textPaster.paste(text: text, moveCaretToEndOfLine: true)
     }
 }
@@ -34,7 +37,7 @@ struct AccessibilityValueStrategy: TextInjectionStrategy {
 }
 
 struct ClipboardPasteStrategy: TextInjectionStrategy {
-    let name = "clipboard_paste_fallback"
+    let name = "copy_then_command_v"
     private let textPaster: TextPasting
 
     init(textPaster: TextPasting) {
@@ -49,6 +52,9 @@ struct ClipboardPasteStrategy: TextInjectionStrategy {
     }
 
     func inject(text: String, context: InjectionContext) throws {
+        guard context.isStillFrontmost() else {
+            throw TextInjector.TextInjectionError.targetNoLongerFrontmost
+        }
         try textPaster.paste(text: text, moveCaretToEndOfLine: false)
     }
 }
